@@ -203,12 +203,14 @@
 .plex-player-modal {
     width: 360px;
     max-width: calc(100vw - 24px);
+    min-width: 220px;
     background: #000;
     border-radius: 10px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
     box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
+    position: relative;
 }
 
 .plex-player-header {
@@ -221,6 +223,7 @@
     cursor: move;
     user-select: none;
     flex-shrink: 0;
+    touch-action: none;
 }
 
 .plex-player-title {
@@ -247,4 +250,18 @@
     aspect-ratio: 16 / 9;
     background: #000;
     display: block;
+}
+
+.plex-player-resize-handle {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    /* 대각선 그립 표시 (우하단 모서리 스타일) */
+    background:
+        linear-gradient(135deg, transparent 0 45%, rgba(255, 255, 255, 0.55) 45% 55%, transparent 55% 100%);
+    z-index: 2;
+    touch-action: none;
 }

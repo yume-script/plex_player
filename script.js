@@ -32,12 +32,21 @@
         els.loading = $('plexLoading');
         els.grid = $('plexGrid');
         els.pagination = $('plexPagination');
-        els.overlay = $('plexPlayerOverlay');
-        els.playerModal = $('plexPlayerModal');
-        els.playerHeader = $('plexPlayerHeader');
-        els.video = $('plexVideoEl');
-        els.playerTitle = $('plexPlayerTitle');
-        els.playerClose = $('plexPlayerClose');
+    }
+
+    // 플레이어(미니 플레이어) 관련 엘리먼트는 항상 특정 overlay 노드
+    // "안에서만" querySelector로 찾습니다. document.getElementById로 전역
+    // 검색하면, 카테고리를 재방문했을 때 body로 옮겨둔 기존(재생 중) 오버레이
+    // 안의 엘리먼트와 새로 주입된 오버레이 안의 동일 id 엘리먼트가 뒤섞여
+    // 어느 쪽을 집었는지 알 수 없게 됩니다.
+    function cachePlayerEls(overlay) {
+        els.overlay = overlay;
+        els.playerModal = overlay.querySelector('#plexPlayerModal');
+        els.playerHeader = overlay.querySelector('#plexPlayerHeader');
+        els.playerResizeHandle = overlay.querySelector('#plexPlayerResizeHandle');
+        els.video = overlay.querySelector('#plexVideoEl');
+        els.playerTitle = overlay.querySelector('#plexPlayerTitle');
+        els.playerClose = overlay.querySelector('#plexPlayerClose');
     }
 
     function setLoading(isLoading) {
@@ -636,6 +645,46 @@
     }
 
     // ------------------------------------------------------------------
+    // 미니 플레이어 크기 조절
+    // ------------------------------------------------------------------
+    // 우하단 핸들을 잡고 끌면 창 너비를 바꿉니다. 높이는 직접 계산하지
+    // 않고 video 엘리먼트의 CSS aspect-ratio(16:9)가 너비에 맞춰 자동으로
+    // 따라가게 해서, 드래그 중 화면 비율이 어긋나는 일이 없게 합니다.
+    function makePlayerResizable() {
+        var resizing = false;
+        var startX = 0;
+        var startWidth = 0;
+        var minWidth = 220;
+
+        els.playerResizeHandle.addEventListener('pointerdown', function (e) {
+            resizing = true;
+            startX = e.clientX;
+            startWidth = els.playerModal.getBoundingClientRect().width;
+            try {
+                els.playerResizeHandle.setPointerCapture(e.pointerId);
+            } catch (err) {
+                // 포인터 캡처 미지원 환경 - 크기 조절 자체는 계속 동작합니다.
+            }
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        els.playerResizeHandle.addEventListener('pointermove', function (e) {
+            if (!resizing) return;
+            var dx = e.clientX - startX;
+            var maxWidth = window.innerWidth - 24;
+            var newWidth = Math.max(minWidth, Math.min(startWidth + dx, maxWidth));
+            els.playerModal.style.width = newWidth + 'px';
+        });
+
+        function endResize() {
+            resizing = false;
+        }
+        els.playerResizeHandle.addEventListener('pointerup', endResize);
+        els.playerResizeHandle.addEventListener('pointercancel', endResize);
+    }
+
+    // ------------------------------------------------------------------
     // 초기화
     // ------------------------------------------------------------------
     function init() {
@@ -661,8 +710,37 @@
                 loadVideos(1);
             }
         });
-        els.playerClose.addEventListener('click', closePlayer);
-        makePlayerDraggable();
+
+        // 다른 카테고리로 이동하면 코어가 지금 이 카테고리 컨테이너
+        // (라이브러리 목록, 그리드 등이 들어있는 부분) 자체를 통째로
+        // 새 화면으로 갈아끼웁니다. 미니 플레이어(영상)가 그 안에 있으면
+        // 같이 사라지고 재생이 끊깁니다. 그래서 미니 플레이어만은 body
+        // 바로 아래로 꺼내서, 어느 카테고리로 이동해도 살아남아 계속
+        // 재생되게 만듭니다.
+        //
+        // 이 카테고리를 다시 방문하면 script.js가 처음부터 다시 실행되며
+        // index.html도 새로 주입되므로, plexPlayerOverlay가 매번 새로
+        // 하나씩 생깁니다. 이미 body에 살아있는 이전 플레이어가 있다면
+        // 그건 그대로 재생되게 놔두고, 방금 새로 주입된 것(화면에 보일
+        // 일이 없는 빈 중복본)은 지운 뒤 기존 것을 그대로 재사용합니다.
+        // 기존 것의 id는 최초 진입 때 바꿔뒀으므로, 여기서 찾는
+        // 'plexPlayerOverlay'는 항상 방금 새로 주입된 것만 가리킵니다.
+        var freshOverlay = document.getElementById('plexPlayerOverlay');
+        if (window.__plexPlayerPersistent) {
+            if (freshOverlay && freshOverlay.parentNode) {
+                freshOverlay.parentNode.removeChild(freshOverlay);
+            }
+            cachePlayerEls(window.__plexPlayerPersistent);
+        } else {
+            cachePlayerEls(freshOverlay);
+            els.overlay.id = 'plexPlayerOverlayPersistent';
+            document.body.appendChild(els.overlay);
+            window.__plexPlayerPersistent = els.overlay;
+            els.playerClose.addEventListener('click', closePlayer);
+            makePlayerDraggable();
+            makePlayerResizable();
+        }
+
         // 첫 재생 클릭 시점의 대기시간을 줄이기 위해 미리 로드를 시작해둡니다.
         // 실패해도(네트워크 등) 여기서는 조용히 무시하고, 실제 재생 시점에
         // openPlayer()가 다시 시도합니다.
