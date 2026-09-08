@@ -187,52 +187,64 @@
     margin-top: 0.2rem;
 }
 
+/* 전체화면을 덮는 다크 오버레이 대신, 화면 한쪽 구석에 떠서 뒤 화면(독서 등)
+   조작을 막지 않는 미니 플레이어입니다. 기본 위치는 우측 하단이며, 헤더를
+   드래그하면 원하는 위치로 옮길 수 있습니다(script.js의 makePlayerDraggable
+   참고). display:none일 때는 완전히 안 보이고, 켜져도 이 작은 패널
+   영역에서만 클릭이 먹혀서 뒷배경 스크롤/클릭은 그대로 동작합니다. */
 .plex-player-overlay {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.9);
+    bottom: 20px;
+    right: 20px;
     z-index: 9999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    /* inset/배경 없음 - 화면 전체를 덮지 않습니다 */
 }
 
 .plex-player-modal {
-    width: 100%;
-    max-width: 1100px;
+    width: 360px;
+    max-width: calc(100vw - 24px);
     background: #000;
-    border-radius: 8px;
+    border-radius: 10px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
 }
 
 .plex-player-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.6rem 1rem;
+    padding: 0.5rem 0.75rem;
     background: var(--app-bg-sidebar);
     color: var(--app-text-primary);
+    cursor: move;
+    user-select: none;
+    flex-shrink: 0;
 }
 
 .plex-player-title {
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: 0.5rem;
 }
 
 .plex-player-close {
     background: none;
     border: none;
     color: var(--app-text-primary);
-    font-size: 1.4rem;
+    font-size: 1.3rem;
     line-height: 1;
     cursor: pointer;
+    flex-shrink: 0;
 }
 
 .plex-video {
     width: 100%;
-    max-height: 80vh;
+    aspect-ratio: 16 / 9;
     background: #000;
     display: block;
 }

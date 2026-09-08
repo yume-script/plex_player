@@ -33,6 +33,8 @@
         els.grid = $('plexGrid');
         els.pagination = $('plexPagination');
         els.overlay = $('plexPlayerOverlay');
+        els.playerModal = $('plexPlayerModal');
+        els.playerHeader = $('plexPlayerHeader');
         els.video = $('plexVideoEl');
         els.playerTitle = $('plexPlayerTitle');
         els.playerClose = $('plexPlayerClose');
@@ -567,6 +569,73 @@
     }
 
     // ------------------------------------------------------------------
+    // 미니 플레이어 드래그 이동
+    // ------------------------------------------------------------------
+    // 전체화면 오버레이 대신 화면 구석에 떠 있는 작은 창이라, 헤더를 잡고
+    // 끌면 원하는 위치로 옮길 수 있게 합니다. 독서 중 방해가 되는 자리에
+    // 있으면 옆으로 치워둘 수 있어야 하니까요. 마우스/터치 둘 다 Pointer
+    // Events 하나로 처리합니다.
+    function makePlayerDraggable() {
+        var dragging = false;
+        var startX = 0;
+        var startY = 0;
+        var startLeft = 0;
+        var startTop = 0;
+
+        els.playerHeader.addEventListener('pointerdown', function (e) {
+            // 닫기 버튼 클릭은 드래그로 이어지지 않게 제외합니다.
+            if (e.target === els.playerClose) return;
+
+            dragging = true;
+            var rect = els.playerModal.getBoundingClientRect();
+            startX = e.clientX;
+            startY = e.clientY;
+            startLeft = rect.left;
+            startTop = rect.top;
+
+            // 기본 위치는 CSS의 bottom/right로 잡혀 있으므로, 드래그를
+            // 시작하는 순간 현재 화면상 위치를 left/top으로 고정해
+            // 좌표 계산이 꼬이지 않게 합니다.
+            els.playerModal.style.left = startLeft + 'px';
+            els.playerModal.style.top = startTop + 'px';
+            els.playerModal.style.right = 'auto';
+            els.playerModal.style.bottom = 'auto';
+
+            try {
+                els.playerHeader.setPointerCapture(e.pointerId);
+            } catch (err) {
+                // 포인터 캡처를 지원하지 않는 환경이면 그냥 무시 - 드래그
+                // 자체는 여전히 동작합니다.
+            }
+        });
+
+        els.playerHeader.addEventListener('pointermove', function (e) {
+            if (!dragging) return;
+            var dx = e.clientX - startX;
+            var dy = e.clientY - startY;
+            var newLeft = startLeft + dx;
+            var newTop = startTop + dy;
+
+            // 창을 화면 밖으로 완전히 끌고 나가서 못 찾게 되는 걸 막기
+            // 위해, 최소한 헤더 일부는 항상 화면 안에 남도록 제한합니다.
+            var minVisible = 60;
+            var maxLeft = window.innerWidth - minVisible;
+            var maxTop = window.innerHeight - 40;
+            newLeft = Math.max(minVisible - els.playerModal.offsetWidth, Math.min(newLeft, maxLeft));
+            newTop = Math.max(0, Math.min(newTop, maxTop));
+
+            els.playerModal.style.left = newLeft + 'px';
+            els.playerModal.style.top = newTop + 'px';
+        });
+
+        function endDrag() {
+            dragging = false;
+        }
+        els.playerHeader.addEventListener('pointerup', endDrag);
+        els.playerHeader.addEventListener('pointercancel', endDrag);
+    }
+
+    // ------------------------------------------------------------------
     // 초기화
     // ------------------------------------------------------------------
     function init() {
@@ -593,6 +662,7 @@
             }
         });
         els.playerClose.addEventListener('click', closePlayer);
+        makePlayerDraggable();
         // 첫 재생 클릭 시점의 대기시간을 줄이기 위해 미리 로드를 시작해둡니다.
         // 실패해도(네트워크 등) 여기서는 조용히 무시하고, 실제 재생 시점에
         // openPlayer()가 다시 시도합니다.
