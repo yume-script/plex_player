@@ -80,8 +80,12 @@ Plex Media Server의 특정 라이브러리(섹션)를 선택해 영상 목록�
 """
 
 import base64
+import hashlib
 import json
+import os
+import random
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlencode
@@ -101,6 +105,18 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
     # 썸네일 일괄(batch) 조회 시 Plex에 동시에 보낼 최대 요청 수.
     THUMB_BATCH_WORKERS = 6
+
+    # 라이브러리(섹션) 목록/썸네일을 코어의 Redis 캐시(self.cache_get/
+    # cache_set)에 의존하지 않고 이 플러그인 폴더 안에 직접 캐싱합니다.
+    # 배포 환경마다 그 헬퍼가 실제로 존재/동작하는지가 불확실했던 반면,
+    # 플러그인 폴더 자체는 (requirements.txt 설치 시 libs/ 하위 폴더가
+    # 생기는 것에서 보듯) 항상 쓰기 가능하다는 게 프레임워크의 기본
+    # 전제이므로, 여기 캐시는 Redis 유무와 무관하게 항상 동작합니다.
+    CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+    SECTIONS_CACHE_TTL = 300       # 라이브러리 목록: 5분
+    THUMB_CACHE_TTL = 30 * 86400   # 썸네일: 30일 (자주 안 바뀌는 정적 이미지)
+    CACHE_MAX_AGE = 45 * 86400     # 이 기간이 지난 캐시 파일은 정리 대상
+    CACHE_CLEANUP_PROBABILITY = 0.02  # 쓰기마다 2% 확률로만 정리 스캔 실행
 
     # 재생 워밍업(fire-and-forget) 요청 전용 타임아웃. REQUEST_TIMEOUT_SEC
     # (사용자가 응답을 기다리는 짧은 타임아웃)과 달리 아무도 기다리지 않는
@@ -282,26 +298,74 @@ class PlexPlayerProvider(BaseMetadataProvider):
         except (TypeError, ValueError):
             return default
 
-    def _safe_cache_get(self, key):
-        """코어 배포판에 따라 BaseMetadataProvider에 cache_get/cache_set가
-        아예 없거나(구버전 코어), 인스턴스 생성 방식에 따라 클래스에는 안
-        보이고 로더가 만든 인스턴스에만 붙어있는 경우가 있습니다. 어느
-        쪽이든 캐시는 '있으면 좋고 없어도 그만'인 최적화일 뿐 핵심 기능이
-        아니므로, 메서드가 없거나 호출이 실패하면 조용히 캐시 미스로
-        처리해 항상 원본 조회로 안전하게 폴백합니다."""
-        try:
-            return self.cache_get(key)
-        except AttributeError:
+    def _safe_cache_get(self, key, sub="", ttl=None):
+        """플러그인 폴더 안 디스크 캐시에서 읽습니다. ttl(초)이 주어지면
+        그보다 오래된 항목은 만료로 간주해 None을 반환합니다(파일 자체는
+        지우지 않고, 다음 _safe_cache_set 때 덮어씁니다 - 삭제는 별도
+        정리 루틴이 담당)."""
+        path = self._disk_cache_path(key, sub)
+        if not path or not os.path.isfile(path):
             return None
-        except Exception:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, ValueError):
             return None
 
-    def _safe_cache_set(self, key, value, ttl=None):
+        if ttl is not None and (time.time() - payload.get("ts", 0)) > ttl:
+            return None
+
+        return payload.get("value")
+
+    def _safe_cache_set(self, key, value, sub="", ttl=None):
+        """디스크에 원자적으로(임시 파일 후 os.replace) 기록합니다. ttl은
+        여기서는 쓰이지 않고(만료 판단은 읽을 때 함) 호출부 시그니처
+        호환을 위해서만 받습니다. 쓰기 실패(권한/디스크 문제 등)는 캐시가
+        없어지는 것뿐이므로 조용히 무시합니다."""
+        path = self._disk_cache_path(key, sub)
+        if not path:
+            return
+        payload = {"ts": time.time(), "value": value}
         try:
-            self.cache_set(key, value, ttl=ttl)
-        except AttributeError:
-            pass
-        except Exception:
+            tmp_path = f"{path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp_path, path)
+        except OSError:
+            return
+
+        # 매 쓰기마다 스캔하면 낭비이므로 낮은 확률로만 오래된 캐시 파일을
+        # 정리합니다(베스트 에포트 - 실패해도 다음 기회에 다시 시도됨).
+        if random.random() < self.CACHE_CLEANUP_PROBABILITY:
+            self._cleanup_old_cache_files()
+
+    def _disk_cache_path(self, key, sub=""):
+        directory = os.path.join(self.CACHE_DIR, sub) if sub else self.CACHE_DIR
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError:
+            return None
+        digest = hashlib.md5(key.encode("utf-8")).hexdigest()
+        return os.path.join(directory, digest + ".json")
+
+    def _cleanup_old_cache_files(self):
+        """CACHE_MAX_AGE보다 오래된 캐시 파일을 지웁니다. 사용자가 Plex
+        라이브러리를 계속 둘러볼수록 썸네일 캐시 파일이 계속 쌓이기만
+        하는 것을 막기 위한 청소입니다. 정리 자체가 실패해도(권한 등)
+        플러그인 동작에는 영향이 없으므로 예외를 삼킵니다."""
+        try:
+            now = time.time()
+            for root, _dirs, files in os.walk(self.CACHE_DIR):
+                for name in files:
+                    if not name.endswith(".json"):
+                        continue
+                    path = os.path.join(root, name)
+                    try:
+                        if now - os.path.getmtime(path) > self.CACHE_MAX_AGE:
+                            os.remove(path)
+                    except OSError:
+                        continue
+        except OSError:
             pass
 
     def _request_json(self, url, timeout):
@@ -316,7 +380,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
     def _get_sections(self, base_url, token, timeout):
         cache_key = f"sections:{base_url}"
-        cached = self._safe_cache_get(cache_key)
+        cached = self._safe_cache_get(cache_key, sub="sections", ttl=self.SECTIONS_CACHE_TTL)
         if cached:
             try:
                 sections = json.loads(cached)
@@ -347,7 +411,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 }
             )
 
-        self._safe_cache_set(cache_key, json.dumps(sections), ttl=300)
+        self._safe_cache_set(cache_key, json.dumps(sections), sub="sections")
         return {"success": True, "sections": sections, "base_url": base_url}
 
     def _get_section_items(self, base_url, token, library_key, timeout, page=1, sort_key=""):
@@ -536,7 +600,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
     def _get_thumb(self, base_url, token, thumb_path, timeout):
         cache_key = f"thumb:{base_url}:{thumb_path}"
-        cached = self._safe_cache_get(cache_key)
+        cached = self._safe_cache_get(cache_key, sub="thumbs", ttl=self.THUMB_CACHE_TTL)
         if cached:
             return {"success": True, "data_url": cached}
 
@@ -552,8 +616,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
         b64 = base64.b64encode(res.content).decode("ascii")
         data_url = f"data:{content_type};base64,{b64}"
 
+        # 디스크 캐시 파일 하나가 과도하게 커지는 것만 방지합니다(Redis
+        # 값 크기 제한과는 무관하지만, 동일한 안전 마진을 그대로 유지).
         if len(data_url) < 500000:
-            self._safe_cache_set(cache_key, data_url, ttl=86400)
+            self._safe_cache_set(cache_key, data_url, sub="thumbs")
 
         return {"success": True, "data_url": data_url}
 
