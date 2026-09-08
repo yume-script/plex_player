@@ -19,6 +19,10 @@
         <span id="plexLoading" class="plex-loading" style="display:none;">불러오는 중...</span>
     </div>
 
+    <!-- 기본(인라인) 재생 모드일 때 플레이어가 이 자리에 옮겨져 들어옵니다.
+         미니창 모드로 전환하면 여기가 아니라 document.body 아래로 옮겨집니다. -->
+    <div id="plexInlinePlayerSlot" class="plex-inline-player-slot" style="display:none;"></div>
+
     <div id="plexGrid" class="plex-grid">
         <div class="plex-empty">상단에서 Plex 라이브러리를 선택해주세요.</div>
     </div>
@@ -28,12 +32,14 @@
 
 <div id="plexPlayerOverlay" class="plex-player-overlay" style="display:none;">
     <div class="plex-player-modal" id="plexPlayerModal">
-        <div class="plex-player-header" id="plexPlayerHeader" title="드래그해서 위치 이동">
+        <div class="plex-player-header" id="plexPlayerHeader" title="드래그해서 위치 이동(미니창 모드에서만)">
             <span id="plexPlayerTitle" class="plex-player-title"></span>
+            <button id="plexPlayerMiniToggle" class="plex-player-mini-toggle" type="button">미니창</button>
             <button id="plexPlayerClose" class="plex-player-close" aria-label="닫기">&times;</button>
         </div>
         <video id="plexVideoEl" class="plex-video" controls autoplay playsinline></video>
-        <div id="plexPlayerResizeHandle" class="plex-player-resize-handle" title="드래그해서 크기 조절"></div>
+        <div id="plexPlayerResizeHandle" class="plex-player-resize-handle" title="드래그해서 크기 조절(미니창 모드에서만)"></div>
     </div>
 </div>
+
 

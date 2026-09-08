@@ -32,6 +32,7 @@
         els.loading = $('plexLoading');
         els.grid = $('plexGrid');
         els.pagination = $('plexPagination');
+        els.inlineSlot = $('plexInlinePlayerSlot');
     }
 
     // 플레이어(미니 플레이어) 관련 엘리먼트는 항상 특정 overlay 노드
@@ -47,6 +48,7 @@
         els.video = overlay.querySelector('#plexVideoEl');
         els.playerTitle = overlay.querySelector('#plexPlayerTitle');
         els.playerClose = overlay.querySelector('#plexPlayerClose');
+        els.miniToggleBtn = overlay.querySelector('#plexPlayerMiniToggle');
     }
 
     function setLoading(isLoading) {
@@ -423,6 +425,72 @@
         await openPlayer(proxyUrl, title || data.title);
     }
 
+    // ------------------------------------------------------------------
+    // 재생 모드 전환 (인라인 ↔ 미니창)
+    // ------------------------------------------------------------------
+    // 기본은 인라인 모드(카테고리 페이지 안, 이미지 예시의 M3U 플레이어와
+    // 비슷한 큰 영역)입니다. 다른 카테고리로 이동하면 이 페이지 자체가
+    // 사라지므로 자연스럽게 같이 멈춥니다. 헤더의 "미니창" 버튼을 누르면
+    // document.body 아래로 옮겨져 화면 구석에 뜬 채로 다른 카테고리로
+    // 이동해도 계속 재생되는 모드로 전환됩니다.
+    function setPlayerMode(mode, inlineSlotOverride) {
+        els.overlay.classList.remove('plex-mode-inline', 'plex-mode-mini');
+        els.overlay.classList.add('plex-mode-' + mode);
+
+        if (mode === 'mini') {
+            els.overlay.id = 'plexPlayerOverlayPersistent';
+            if (els.overlay.parentNode !== document.body) {
+                document.body.appendChild(els.overlay);
+            }
+            // 인라인 슬롯이 지금 화면에 남아있다면(같은 카테고리를 보고
+            // 있는 상태) 빈 자리로 접어둡니다.
+            var slotNow = document.getElementById('plexInlinePlayerSlot');
+            if (slotNow) {
+                slotNow.style.display = 'none';
+            }
+        } else {
+            els.overlay.id = 'plexPlayerOverlay';
+            var slot = inlineSlotOverride || els.inlineSlot;
+            if (slot && els.overlay.parentNode !== slot) {
+                slot.appendChild(els.overlay);
+            }
+            if (slot) {
+                els.inlineSlot = slot;
+                slot.style.display = '';
+            }
+            // 드래그로 옮겨놨던 좌표/폭은 인라인에서는 의미가 없으므로
+            // 초기화해서 미니창으로 다시 전환할 때 기본 위치(우하단)부터
+            // 시작하게 합니다.
+            els.playerModal.style.left = '';
+            els.playerModal.style.top = '';
+            els.playerModal.style.right = '';
+            els.playerModal.style.bottom = '';
+            els.playerModal.style.width = '';
+        }
+
+        if (els.miniToggleBtn) {
+            els.miniToggleBtn.textContent = mode === 'mini' ? '인라인으로' : '미니창';
+            els.miniToggleBtn.title = mode === 'mini' ? '카테고리 페이지 안으로 되돌리기' : '화면 구석의 작은 창으로 전환';
+        }
+    }
+
+    function toggleMiniMode() {
+        var isMini = els.overlay.classList.contains('plex-mode-mini');
+        if (isMini) {
+            // 인라인으로 되돌아가려면 지금 화면에 plex_player 카테고리
+            // 페이지가 실제로 떠 있어야 합니다(다른 카테고리를 보는 중이면
+            // 옮겨 넣을 자리가 없음).
+            var slot = document.getElementById('plexInlinePlayerSlot');
+            if (!slot) {
+                alert('인라인 모드로 전환하려면 먼저 "Plex 영상 재생" 카테고리로 이동해주세요.');
+                return;
+            }
+            setPlayerMode('inline', slot);
+        } else {
+            setPlayerMode('mini');
+        }
+    }
+
     async function openPlayer(url, title) {
         var HlsCtor = null;
         try {
@@ -444,7 +512,17 @@
         // 먼저 오버레이가 열려서, 재생 불가 상황에도 빈 검은 화면 모달만
         // 뜨는 문제가 있었습니다).
         els.playerTitle.textContent = title || '';
+
+        // 아직 모드가 정해진 적이 없으면(이 오버레이로 첫 재생) 기본값인
+        // 인라인 모드로 시작합니다. 이미 모드가 있으면(예: 미니창으로
+        // 전환해둔 상태에서 다른 영상을 새로 재생) 그 모드를 그대로 유지합니다.
+        if (!els.overlay.classList.contains('plex-mode-inline') && !els.overlay.classList.contains('plex-mode-mini')) {
+            setPlayerMode('inline');
+        }
         els.overlay.style.display = 'flex';
+        if (els.overlay.classList.contains('plex-mode-inline') && els.inlineSlot) {
+            els.inlineSlot.style.display = '';
+        }
 
         if (window.__plexHls) {
             window.__plexHls.destroy();
@@ -575,6 +653,9 @@
             window.__plexHls = null;
         }
         els.overlay.style.display = 'none';
+        if (els.overlay.classList.contains('plex-mode-inline') && els.inlineSlot) {
+            els.inlineSlot.style.display = 'none';
+        }
     }
 
     // ------------------------------------------------------------------
@@ -592,8 +673,11 @@
         var startTop = 0;
 
         els.playerHeader.addEventListener('pointerdown', function (e) {
-            // 닫기 버튼 클릭은 드래그로 이어지지 않게 제외합니다.
-            if (e.target === els.playerClose) return;
+            // 인라인 모드에서는 드래그 이동이 의미가 없으니(폭이 페이지에
+            // 고정) 미니창 모드일 때만 동작합니다.
+            if (!els.overlay.classList.contains('plex-mode-mini')) return;
+            // 닫기 버튼/미니창 전환 버튼 클릭은 드래그로 이어지지 않게 제외합니다.
+            if (e.target === els.playerClose || e.target === els.miniToggleBtn) return;
 
             dragging = true;
             var rect = els.playerModal.getBoundingClientRect();
@@ -657,6 +741,7 @@
         var minWidth = 220;
 
         els.playerResizeHandle.addEventListener('pointerdown', function (e) {
+            if (!els.overlay.classList.contains('plex-mode-mini')) return;
             resizing = true;
             startX = e.clientX;
             startWidth = els.playerModal.getBoundingClientRect().width;
@@ -711,32 +796,29 @@
             }
         });
 
-        // 다른 카테고리로 이동하면 코어가 지금 이 카테고리 컨테이너
-        // (라이브러리 목록, 그리드 등이 들어있는 부분) 자체를 통째로
-        // 새 화면으로 갈아끼웁니다. 미니 플레이어(영상)가 그 안에 있으면
-        // 같이 사라지고 재생이 끊깁니다. 그래서 미니 플레이어만은 body
-        // 바로 아래로 꺼내서, 어느 카테고리로 이동해도 살아남아 계속
-        // 재생되게 만듭니다.
-        //
-        // 이 카테고리를 다시 방문하면 script.js가 처음부터 다시 실행되며
-        // index.html도 새로 주입되므로, plexPlayerOverlay가 매번 새로
-        // 하나씩 생깁니다. 이미 body에 살아있는 이전 플레이어가 있다면
-        // 그건 그대로 재생되게 놔두고, 방금 새로 주입된 것(화면에 보일
-        // 일이 없는 빈 중복본)은 지운 뒤 기존 것을 그대로 재사용합니다.
-        // 기존 것의 id는 최초 진입 때 바꿔뒀으므로, 여기서 찾는
-        // 'plexPlayerOverlay'는 항상 방금 새로 주입된 것만 가리킵니다.
+        // 기본(인라인) 모드는 카테고리 페이지 안에서 재생되므로, 다른
+        // 카테고리로 이동하면 이 페이지 컨테이너 자체가 사라지면서 자연히
+        // 같이 멈춥니다(의도된 동작). 반면 "미니창" 버튼으로 전환한
+        // 경우에는 setPlayerMode('mini')가 오버레이를 document.body
+        // 바로 아래로 옮기고 id를 'plexPlayerOverlayPersistent'로
+        // 바꿔두므로, 카테고리를 넘나들어도 이 요소 자체는 사라지지
+        // 않습니다. 그래서 재방문 시엔 그 id로 "이미 미니창으로 떠서
+        // 재생 중인 게 있는지" 판별합니다 - 있으면 방금 새로 주입된 빈
+        // 사본은 지우고 기존 것을 그대로 재사용하고(리스너 중복 방지),
+        // 없으면(최초 진입이거나 지난 세션이 인라인 모드로 끝나 컨테이너와
+        // 함께 정리된 경우) 새로 주입된 것을 인라인 모드로 초기화합니다.
+        var persistentOverlay = document.getElementById('plexPlayerOverlayPersistent');
         var freshOverlay = document.getElementById('plexPlayerOverlay');
-        if (window.__plexPlayerPersistent) {
+        if (persistentOverlay) {
             if (freshOverlay && freshOverlay.parentNode) {
                 freshOverlay.parentNode.removeChild(freshOverlay);
             }
-            cachePlayerEls(window.__plexPlayerPersistent);
+            cachePlayerEls(persistentOverlay);
         } else {
             cachePlayerEls(freshOverlay);
-            els.overlay.id = 'plexPlayerOverlayPersistent';
-            document.body.appendChild(els.overlay);
-            window.__plexPlayerPersistent = els.overlay;
+            setPlayerMode('inline');
             els.playerClose.addEventListener('click', closePlayer);
+            els.miniToggleBtn.addEventListener('click', toggleMiniMode);
             makePlayerDraggable();
             makePlayerResizable();
         }

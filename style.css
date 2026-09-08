@@ -187,23 +187,31 @@
     margin-top: 0.2rem;
 }
 
-/* 전체화면을 덮는 다크 오버레이 대신, 화면 한쪽 구석에 떠서 뒤 화면(독서 등)
-   조작을 막지 않는 미니 플레이어입니다. 기본 위치는 우측 하단이며, 헤더를
-   드래그하면 원하는 위치로 옮길 수 있습니다(script.js의 makePlayerDraggable
-   참고). display:none일 때는 완전히 안 보이고, 켜져도 이 작은 패널
-   영역에서만 클릭이 먹혀서 뒷배경 스크롤/클릭은 그대로 동작합니다. */
-.plex-player-overlay {
+.plex-inline-player-slot {
+    width: 100%;
+}
+
+/* 재생 창은 두 가지 모드가 있습니다.
+   - plex-mode-inline(기본): 카테고리 페이지 안(plexInlinePlayerSlot)에
+     자리잡는 큰 인라인 재생 영역. 다른 카테고리로 이동하면 이 페이지
+     자체가 사라지므로 자연스럽게 같이 멈춥니다.
+   - plex-mode-mini: 헤더의 "미니창" 버튼을 눌러야 전환되며, 그때만
+     document.body 아래로 옮겨져 화면 구석에 뜬 채로 다른 카테고리로
+     이동해도 계속 재생됩니다(script.js의 setPlayerMode 참고). 드래그로
+     위치 이동, 모서리로 크기 조절도 이 모드에서만 동작합니다. */
+.plex-player-overlay.plex-mode-mini {
     position: fixed;
     bottom: 20px;
     right: 20px;
     z-index: 9999;
-    /* inset/배경 없음 - 화면 전체를 덮지 않습니다 */
+}
+
+.plex-player-overlay.plex-mode-inline {
+    position: static;
+    width: 100%;
 }
 
 .plex-player-modal {
-    width: 360px;
-    max-width: calc(100vw - 24px);
-    min-width: 220px;
     background: #000;
     border-radius: 10px;
     overflow: hidden;
@@ -213,6 +221,16 @@
     position: relative;
 }
 
+.plex-mode-mini .plex-player-modal {
+    width: 360px;
+    max-width: calc(100vw - 24px);
+    min-width: 220px;
+}
+
+.plex-mode-inline .plex-player-modal {
+    width: 100%;
+}
+
 .plex-player-header {
     display: flex;
     align-items: center;
@@ -220,9 +238,12 @@
     padding: 0.5rem 0.75rem;
     background: var(--app-bg-sidebar);
     color: var(--app-text-primary);
-    cursor: move;
     user-select: none;
     flex-shrink: 0;
+}
+
+.plex-mode-mini .plex-player-header {
+    cursor: move;
     touch-action: none;
 }
 
@@ -233,6 +254,23 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     padding-right: 0.5rem;
+    flex: 1;
+}
+
+.plex-player-mini-toggle {
+    background: none;
+    border: 1px solid var(--app-border);
+    color: var(--app-text-primary);
+    border-radius: 4px;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-right: 0.4rem;
+}
+
+.plex-player-mini-toggle:hover {
+    background: var(--app-bg-card-hover);
 }
 
 .plex-player-close {
@@ -250,6 +288,12 @@
     aspect-ratio: 16 / 9;
     background: #000;
     display: block;
+}
+
+/* 인라인 모드에서는 크기를 자유 조절할 이유가 없어(폭은 페이지에 맞춰
+   자동), 리사이즈 핸들을 숨깁니다. */
+.plex-mode-inline .plex-player-resize-handle {
+    display: none;
 }
 
 .plex-player-resize-handle {
