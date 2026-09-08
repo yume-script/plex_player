@@ -458,13 +458,13 @@
                 els.inlineSlot = slot;
                 slot.style.display = '';
             }
-            // 드래그로 옮겨놨던 좌표/폭은 인라인에서는 의미가 없으므로
-            // 초기화해서 미니창으로 다시 전환할 때 기본 위치(우하단)부터
-            // 시작하게 합니다.
-            els.playerModal.style.left = '';
-            els.playerModal.style.top = '';
-            els.playerModal.style.right = '';
-            els.playerModal.style.bottom = '';
+            // 드래그로 옮겨놨던 좌표(오버레이)/리사이즈한 폭(모달)은
+            // 인라인에서는 의미가 없으므로 초기화해서 미니창으로 다시
+            // 전환할 때 기본 위치(우하단)부터 시작하게 합니다.
+            els.overlay.style.left = '';
+            els.overlay.style.top = '';
+            els.overlay.style.right = '';
+            els.overlay.style.bottom = '';
             els.playerModal.style.width = '';
         }
 
@@ -680,7 +680,13 @@
             if (e.target === els.playerClose || e.target === els.miniToggleBtn) return;
 
             dragging = true;
-            var rect = els.playerModal.getBoundingClientRect();
+            // 드래그 대상은 반드시 position:fixed인 els.overlay여야 합니다.
+            // els.playerModal은 position:relative라서, 여기에 left/top을
+            // 화면 좌표값(px)으로 그대로 넣으면 "원래 있던 자리 기준
+            // 오프셋"으로 해석되어 엉뚱한 곳으로 튀어버립니다(실제로 겪은
+            // 버그). fixed 요소의 left/top만 뷰포트 기준 절대 좌표로
+            // 동작합니다.
+            var rect = els.overlay.getBoundingClientRect();
             startX = e.clientX;
             startY = e.clientY;
             startLeft = rect.left;
@@ -689,10 +695,10 @@
             // 기본 위치는 CSS의 bottom/right로 잡혀 있으므로, 드래그를
             // 시작하는 순간 현재 화면상 위치를 left/top으로 고정해
             // 좌표 계산이 꼬이지 않게 합니다.
-            els.playerModal.style.left = startLeft + 'px';
-            els.playerModal.style.top = startTop + 'px';
-            els.playerModal.style.right = 'auto';
-            els.playerModal.style.bottom = 'auto';
+            els.overlay.style.left = startLeft + 'px';
+            els.overlay.style.top = startTop + 'px';
+            els.overlay.style.right = 'auto';
+            els.overlay.style.bottom = 'auto';
 
             try {
                 els.playerHeader.setPointerCapture(e.pointerId);
@@ -714,11 +720,11 @@
             var minVisible = 60;
             var maxLeft = window.innerWidth - minVisible;
             var maxTop = window.innerHeight - 40;
-            newLeft = Math.max(minVisible - els.playerModal.offsetWidth, Math.min(newLeft, maxLeft));
+            newLeft = Math.max(minVisible - els.overlay.offsetWidth, Math.min(newLeft, maxLeft));
             newTop = Math.max(0, Math.min(newTop, maxTop));
 
-            els.playerModal.style.left = newLeft + 'px';
-            els.playerModal.style.top = newTop + 'px';
+            els.overlay.style.left = newLeft + 'px';
+            els.overlay.style.top = newTop + 'px';
         });
 
         function endDrag() {
