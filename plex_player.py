@@ -98,8 +98,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
     # 영화/시리즈, 에피소드 목록 한 페이지당 표시 개수.
     ITEMS_PER_PAGE = 30
+
     # 썸네일 일괄(batch) 조회 시 Plex에 동시에 보낼 최대 요청 수.
     THUMB_BATCH_WORKERS = 6
+
     # 재생 워밍업(fire-and-forget) 요청 전용 타임아웃. REQUEST_TIMEOUT_SEC
     # (사용자가 응답을 기다리는 짧은 타임아웃)과 달리 아무도 기다리지 않는
     # 백그라운드 요청이므로 트랜스코더가 실제로 준비될 시간을 넉넉히 줍니다.
@@ -174,9 +176,6 @@ class PlexPlayerProvider(BaseMetadataProvider):
     detail_sidebar_widget = None
     update_manifest = None
 
-    # 사이드바 1등 시민 카테고리 메뉴로 등록합니다.
-    # sessions를 "all"로 두었지만, 영상 서재 세션에만 노출하고 싶다면
-    # ["video"] 로 바꾸십시오.
     category_tab = {
         "title": "Plex 영상 재생",
         "icon": "fa-solid fa-clapperboard",
@@ -237,35 +236,31 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 return {"success": False, "error": "thumb_paths가 필요합니다."}
             return self._get_thumbs_batch(base_url, token, thumb_paths, timeout)
 
-        # 기본 동작: 라이브러리(섹션) 목록
         return self._get_sections(base_url, token, timeout)
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
     # ------------------------------------------------------------------
     def _read_request_params(self):
-        """카테고리 풀페이지 UI가 쿼리스트링으로 실어 보낸 action/페이지네이션
-        파라미터를 현재 Flask 요청 컨텍스트에서 읽어옵니다."""
         try:
             from flask import request
             action = (request.args.get("action") or "sections").strip()
             library_key = (request.args.get("library_key") or "").strip()
             rating_key = (request.args.get("rating_key") or "").strip()
             thumb_path = (request.args.get("thumb_path") or "").strip()
+
             page = self._safe_int(request.args.get("page"), 1)
             if page < 1:
                 page = 1
+
             sort_raw = request.args.get("sort")
             if sort_raw is None:
-                # sort 파라미터 자체가 안 왔을 때(기본값) - 최신 등록순.
                 sort_key = "added_desc"
             else:
                 sort_key = sort_raw.strip()
                 if sort_key not in self.SORT_OPTIONS:
                     sort_key = "added_desc"
-                # sort_key가 ""(사용자가 드롭다운에서 "기본순서"를 명시적으로
-                # 고른 경우)면 그대로 "" 유지 - SORT_OPTIONS[""] == ""라서
-                # sort 쿼리 자체를 안 붙이는 정상 동작으로 이어집니다.
+
             thumb_paths_raw = request.args.get("thumb_paths") or ""
             thumb_paths = []
             if thumb_paths_raw:
@@ -275,6 +270,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
                         thumb_paths = [str(p).strip() for p in parsed if str(p).strip()]
                 except (ValueError, TypeError):
                     thumb_paths = []
+
             return action, library_key, rating_key, thumb_path, page, thumb_paths, sort_key
         except Exception:
             return "sections", "", "", "", 1, [], "added_desc"
@@ -285,6 +281,28 @@ class PlexPlayerProvider(BaseMetadataProvider):
             return int(value)
         except (TypeError, ValueError):
             return default
+
+    def _safe_cache_get(self, key):
+        """코어 배포판에 따라 BaseMetadataProvider에 cache_get/cache_set가
+        아예 없거나(구버전 코어), 인스턴스 생성 방식에 따라 클래스에는 안
+        보이고 로더가 만든 인스턴스에만 붙어있는 경우가 있습니다. 어느
+        쪽이든 캐시는 '있으면 좋고 없어도 그만'인 최적화일 뿐 핵심 기능이
+        아니므로, 메서드가 없거나 호출이 실패하면 조용히 캐시 미스로
+        처리해 항상 원본 조회로 안전하게 폴백합니다."""
+        try:
+            return self.cache_get(key)
+        except AttributeError:
+            return None
+        except Exception:
+            return None
+
+    def _safe_cache_set(self, key, value, ttl=None):
+        try:
+            self.cache_set(key, value, ttl=ttl)
+        except AttributeError:
+            pass
+        except Exception:
+            pass
 
     def _request_json(self, url, timeout):
         try:
@@ -298,7 +316,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
     def _get_sections(self, base_url, token, timeout):
         cache_key = f"sections:{base_url}"
-        cached = self.cache_get(cache_key)
+        cached = self._safe_cache_get(cache_key)
         if cached:
             try:
                 sections = json.loads(cached)
@@ -329,13 +347,14 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 }
             )
 
-        self.cache_set(cache_key, json.dumps(sections), ttl=300)
+        self._safe_cache_set(cache_key, json.dumps(sections), ttl=300)
         return {"success": True, "sections": sections, "base_url": base_url}
 
     def _get_section_items(self, base_url, token, library_key, timeout, page=1, sort_key=""):
         page_size = self.ITEMS_PER_PAGE
         start = (page - 1) * page_size
         plex_sort = self.SORT_OPTIONS.get(sort_key, "")
+
         url = (
             f"{base_url}/library/sections/{library_key}/all"
             f"?X-Plex-Token={token}"
@@ -343,6 +362,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
         )
         if plex_sort:
             url += f"&sort={plex_sort}"
+
         data = self._request_json(url, timeout)
         if "__error__" in data:
             return {"success": False, "error": data["__error__"]}
@@ -355,7 +375,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 {
                     "rating_key": m.get("ratingKey"),
                     "title": m.get("title"),
-                    "type": m.get("type"),  # 'movie' 또는 'show'
+                    "type": m.get("type"),
                     "thumb": m.get("thumb") or "",
                     "year": m.get("year"),
                     "summary": m.get("summary") or "",
@@ -363,8 +383,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
                     "leaf_count": m.get("leafCount"),
                 }
             )
+
         total = self._safe_int(container.get("totalSize"), len(items))
         total_pages = max(1, (total + page_size - 1) // page_size) if page_size else 1
+
         return {
             "success": True,
             "items": items,
@@ -380,6 +402,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
         page_size = self.ITEMS_PER_PAGE
         start = (page - 1) * page_size
         plex_sort = self.SORT_OPTIONS.get(sort_key, "")
+
         url = (
             f"{base_url}/library/metadata/{rating_key}/allLeaves"
             f"?X-Plex-Token={token}"
@@ -387,6 +410,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
         )
         if plex_sort:
             url += f"&sort={plex_sort}"
+
         data = self._request_json(url, timeout)
         if "__error__" in data:
             return {"success": False, "error": data["__error__"]}
@@ -411,8 +435,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
                     "duration_ms": m.get("duration"),
                 }
             )
+
         total = self._safe_int(container.get("totalSize"), len(items))
         total_pages = max(1, (total + page_size - 1) // page_size) if page_size else 1
+
         return {
             "success": True,
             "items": items,
@@ -442,27 +468,8 @@ class PlexPlayerProvider(BaseMetadataProvider):
         bitrate = self._safe_int(cfg.get("MAX_VIDEO_BITRATE"), 8000)
         client_id = "bookoasis-plex-player"
 
-        # Plex의 Universal Transcode(/video/:/transcode/universal/start.m3u8)는
-        # 클라이언트를 식별하는 X-Plex-* 파라미터가 충분하지 않으면 400으로
-        # 거절하는 경우가 있어, 실제 Plex 앱들이 보내는 것과 유사한 수준으로
-        # 채워서 보냅니다. (directPlay 관련 설명은 params 바로 위 주석 참고)
-        # subtitleSize만 보내고 subtitles(번인 여부) 자체를 안 보내면 Plex가
-        # 자막을 화면에 합성하지 않습니다. BURN_SUBTITLES 설정에 따라
-        # "burn"(번인, 항상 풀 트랜스코드)/"none"으로 전환합니다. 자막이
-        # 없는 미디어에는 이 값이 있어도 아무 영향이 없습니다. 특정 자막
-        # 트랙 선택(다국어 중 고르기)은 아직 미지원이며, Plex가 media에서
-        # "selected"로 표시된 기본 자막 트랙을 그대로 사용합니다.
-        #
-        # directPlay는 반드시 0이어야 합니다. 한때 CPU 부하를 줄여보려고
-        # 1로 바꿔봤는데, 여기서는 protocol=hls로 세그먼트 단위 스트림을
-        # 명시적으로 요청하고 있어서 directPlay=1을 같이 보내면 Plex의
-        # 결정 엔진이 "이 파일은 Direct Play가 가능하다"고 판단해 실제
-        # 세그먼트(.ts) 파일 자체를 생성하지 않는 경우가 있었습니다.
-        # 매니페스트(m3u8)는 정상 응답하지만 그 안에 나열된 세그먼트가
-        # 전부 404로 실패하는 증상으로 나타났습니다. directStream=1만으로도
-        # 컨테이너만 안 맞는 흔한 경우(mkv 등)는 재인코딩 없이 remux로
-        # 빠지므로, CPU 부하 완화 효과는 이걸로 충분합니다.
         burn_subtitles = str(cfg.get("BURN_SUBTITLES", "1")).strip() != "0"
+
         params = {
             "path": f"/library/metadata/{rating_key}",
             "mediaIndex": 0,
@@ -490,33 +497,12 @@ class PlexPlayerProvider(BaseMetadataProvider):
         }
         stream_url = f"{base_url}/video/:/transcode/universal/start.m3u8?{urlencode(params)}"
 
-        # 진단/검증용 가벼운 사전 확인: /video/:/transcode/universal/decision은
-        # 실제 트랜스코드 세션(인코더)을 띄우지 않고, 지금 파라미터 조합이
-        # 유효한지만 확인해주는 Plex 공식 엔드포인트입니다. start.m3u8을
-        # 직접 두드리던 예전 사전점검과 달리 무겁지 않으므로 "콜드 스타트
-        # 2회" 문제 없이도, 여기서 거부되는 경우(예: 파라미터 조합 오류)
-        # Plex가 실제로 보낸 이유를 hls.js의 두루뭉술한 manifestLoadError
-        # 대신 그대로 보여줄 수 있습니다. 세션 ID는 실제 재생에 쓸 stream_url
-        # 과 절대 겹치지 않도록 별도로 새로 발급합니다.
         check_params = dict(params)
         check_params["session"] = uuid.uuid4().hex
         decision_error = self._check_transcode_decision(base_url, check_params, timeout)
         if decision_error:
             return {"success": False, "error": decision_error}
 
-        # 예전에는 여기서 백엔드가 stream_url을 한 번 더 GET으로 "동기적으로"
-        # 미리 호출해 에러를 확인했습니다. 그 방식은 API 응답 자체가 트랜스
-        # 코드 완료를 기다리는 셈이라 첫 재생 체감 속도가 느렸습니다(콜드
-        # 스타트 2회).
-        # 반면 완전히 생략하니, 실제로는 Plex 트랜스코더 워밍업(콜드 스타트)
-        # 시간이 hls.js의 기본 타임아웃(약 10초)보다 길어서 hls.js가 먼저
-        # 포기하고 재시도하는 사이 세그먼트가 전부 404로 실패하는 문제가
-        # 관찰됐습니다.
-        # 절충안: 이 API 응답은 기다리지 않고(fire-and-forget) 백그라운드
-        # 스레드에서만 같은 stream_url을 한 번 건드려 Plex가 최대한 일찍
-        # 세그먼트 생성을 시작하도록 유도합니다. 이 요청의 성공/실패는
-        # 확인하지 않으며, 프런트엔드 응답 속도에는 전혀 영향을 주지
-        # 않습니다.
         threading.Thread(
             target=self._prewarm_stream, args=(stream_url,), daemon=True
         ).start()
@@ -524,9 +510,6 @@ class PlexPlayerProvider(BaseMetadataProvider):
         return {"success": True, "title": title, "stream_url": stream_url}
 
     def _check_transcode_decision(self, base_url, params, timeout):
-        """/video/:/transcode/universal/decision으로 가볍게 사전 검증합니다.
-        문제가 없으면 None을, 문제가 있으면 사용자에게 보여줄 에러 메시지
-        문자열을 반환합니다."""
         decision_url = f"{base_url}/video/:/transcode/universal/decision?{urlencode(params)}"
         try:
             res = requests.get(
@@ -546,22 +529,14 @@ class PlexPlayerProvider(BaseMetadataProvider):
         return None
 
     def _prewarm_stream(self, stream_url):
-        """백그라운드 전용: 결과를 아무도 기다리지 않으므로 실패해도 조용히
-        무시합니다. 실제 재생 성공 여부는 브라우저의 hls.js 요청이 결정하며,
-        이 호출은 어디까지나 Plex 쪽 트랜스코더를 조금이라도 일찍 깨워주는
-        보조 수단입니다."""
         try:
             requests.get(stream_url, timeout=self.PREWARM_TIMEOUT_SEC)
         except requests.RequestException:
             pass
 
     def _get_thumb(self, base_url, token, thumb_path, timeout):
-        """코어의 logo-cache 프록시가 아니라, 이미 정상 동작이 확인된 백엔드
-        직접 호출(requests) 경로로 썸네일을 가져와 base64 data URL로 돌려줍니다.
-        logo-cache가 502를 내는 환경(사설 IP 판정, 코어 프록시 네트워크 구성
-        차이 등)에서도 영향받지 않습니다."""
         cache_key = f"thumb:{base_url}:{thumb_path}"
-        cached = self.cache_get(cache_key)
+        cached = self._safe_cache_get(cache_key)
         if cached:
             return {"success": True, "data_url": cached}
 
@@ -577,19 +552,12 @@ class PlexPlayerProvider(BaseMetadataProvider):
         b64 = base64.b64encode(res.content).decode("ascii")
         data_url = f"data:{content_type};base64,{b64}"
 
-        # Redis 값 크기 보호를 위해 너무 큰 이미지는 캐시하지 않습니다.
         if len(data_url) < 500000:
-            self.cache_set(cache_key, data_url, ttl=86400)
+            self._safe_cache_set(cache_key, data_url, ttl=86400)
 
         return {"success": True, "data_url": data_url}
 
     def _get_thumbs_batch(self, base_url, token, thumb_paths, timeout):
-        """그리드 한 페이지에 필요한 썸네일 전부를 한 번의 요청으로 받아옵니다.
-        프런트엔드가 카드 수만큼(최대 30개) 개별 fetch를 순차적으로 날리던
-        것이 최초 로딩 체감 속도를 크게 늦추는 원인이었습니다. 여기서는
-        스레드풀로 병렬 조회하되, 각 경로는 여전히 _get_thumb의 Redis 캐시를
-        그대로 타므로 이미 캐시된 항목은 네트워크 요청 없이 즉시 반환됩니다."""
-        # 중복 경로 제거 (순서는 유지할 필요 없음 - 프런트엔드가 경로 기준으로 매칭).
         unique_paths = list(dict.fromkeys(p for p in thumb_paths if p))
         if not unique_paths:
             return {"success": True, "items": {}}
@@ -605,7 +573,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 path = future_to_path[future]
                 try:
                     result = future.result()
-                except Exception as e:
+                except Exception:
                     results[path] = None
                     continue
                 results[path] = result.get("data_url") if result.get("success") else None
