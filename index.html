@@ -28,6 +28,7 @@
                     <option value="release_asc">오래된 개봉순</option>
                     <option value="">기본순서</option>
                 </select>
+                <button id="plexLibraryPrefsBtn" class="plex-icon-btn" type="button" title="표시할 라이브러리 선택">&#9881;</button>
             </div>
 
             <div class="plex-sidebar-subheader">
@@ -62,5 +63,27 @@
             <div id="plexPlayerLoadingText" class="plex-player-loading-text">동영상을 준비하고 있습니다...</div>
         </div>
         <div id="plexPlayerResizeHandle" class="plex-player-resize-handle" title="드래그해서 크기 조절(미니창 모드에서만)"></div>
+    </div>
+</div>
+
+<div id="plexLibraryPrefsOverlay" class="plex-modal-overlay" style="display:none;">
+    <div class="plex-modal">
+        <div class="plex-modal-header">
+            <span>표시할 라이브러리 선택</span>
+            <button id="plexLibraryPrefsClose" class="plex-player-close" aria-label="닫기">&times;</button>
+        </div>
+        <div class="plex-modal-body">
+            <div class="plex-modal-actions-row">
+                <button id="plexLibraryPrefsSelectAll" class="plex-back-btn" type="button">전체 선택</button>
+                <button id="plexLibraryPrefsSelectNone" class="plex-back-btn" type="button">전체 해제</button>
+            </div>
+            <div id="plexLibraryPrefsList" class="plex-library-prefs-list">
+                <div class="plex-empty">불러오는 중...</div>
+            </div>
+        </div>
+        <div class="plex-modal-footer">
+            <span id="plexLibraryPrefsStatus" class="plex-loading"></span>
+            <button id="plexLibraryPrefsSave" class="plex-back-btn" type="button">저장</button>
+        </div>
     </div>
 </div>

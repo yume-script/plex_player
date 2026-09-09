@@ -218,7 +218,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
     # 카테고리 풀페이지 UI의 RPC 진입점
     # ------------------------------------------------------------------
     def get_dashboard_data(self, db_type, limit=10):
-        action, library_key, rating_key, thumb_path, page, thumb_paths, sort_key, search = self._read_request_params()
+        (
+            action, library_key, rating_key, thumb_path, page, thumb_paths,
+            sort_key, search, selected_libraries,
+        ) = self._read_request_params()
 
         cfg = self.get_plugin_config(db_type, default={})
         base_url = (cfg.get("PLEX_URL") or "").strip().rstrip("/")
@@ -257,6 +260,14 @@ class PlexPlayerProvider(BaseMetadataProvider):
             if not thumb_paths:
                 return {"success": False, "error": "thumb_paths가 필요합니다."}
             return self._get_thumbs_batch(base_url, token, thumb_paths, timeout)
+
+        if action == "library_prefs":
+            # 체크박스 UI용: 현재 필터와 무관하게 항상 전체 라이브러리
+            # 목록 + 지금 선택된 항목을 함께 돌려줍니다.
+            return self._get_library_prefs(base_url, token, timeout, cfg)
+
+        if action == "save_library_prefs":
+            return self._save_library_prefs(db_type, selected_libraries)
 
         return self._get_sections(base_url, token, timeout, cfg)
 
@@ -297,9 +308,27 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 except (ValueError, TypeError):
                     thumb_paths = []
 
-            return action, library_key, rating_key, thumb_path, page, thumb_paths, sort_key, search
+            # 라이브러리 표시 설정 체크박스 저장용 - 선택된 라이브러리
+            # 이름들을 JSON 배열 문자열로 받습니다. 빈 배열([])이 아니라
+            # 아예 파라미터가 없는 경우와 구분하기 위해 None으로 초기화합니다.
+            selected_raw = request.args.get("selected_libraries")
+            selected_libraries = None
+            if selected_raw is not None:
+                try:
+                    parsed_sel = json.loads(selected_raw)
+                    if isinstance(parsed_sel, list):
+                        selected_libraries = [str(s).strip() for s in parsed_sel if str(s).strip()]
+                    else:
+                        selected_libraries = []
+                except (ValueError, TypeError):
+                    selected_libraries = []
+
+            return (
+                action, library_key, rating_key, thumb_path, page, thumb_paths,
+                sort_key, search, selected_libraries,
+            )
         except Exception:
-            return "sections", "", "", "", 1, [], "added_desc", ""
+            return "sections", "", "", "", 1, [], "added_desc", "", None
 
     @staticmethod
     def _safe_int(value, default):
@@ -452,6 +481,69 @@ class PlexPlayerProvider(BaseMetadataProvider):
         # 목록이 통째로 사라져 당황할 수 있으므로, 이 경우엔 안전하게
         # 필터링 전 전체 목록으로 폴백합니다.
         return filtered if filtered else sections
+
+    def _get_library_prefs(self, base_url, token, timeout, cfg):
+        """라이브러리 표시 설정 체크박스 UI용: 지금 적용 중인 필터와
+        무관하게 항상 전체 라이브러리 목록을 돌려주고, 그중 현재
+        선택되어(=표시되어) 있는 항목이 어떤 것들인지 함께 알려줍니다.
+        ALLOWED_LIBRARIES가 비어 있으면(기본값 = 전체 표시) selected를
+        None으로 반환하여, 프런트엔드가 "전부 체크된 상태"로 그리도록
+        합니다."""
+        raw = self._get_sections(base_url, token, timeout, cfg=None)
+        if not raw.get("success"):
+            return raw
+
+        allowed_raw = (cfg.get("ALLOWED_LIBRARIES") or "").strip()
+        selected = None
+        if allowed_raw:
+            selected = [name.strip() for name in allowed_raw.split(",") if name.strip()]
+
+        return {"success": True, "sections": raw["sections"], "selected": selected}
+
+    def _save_library_prefs(self, db_type, selected_libraries):
+        """체크박스에서 고른 라이브러리 이름 목록을 ALLOWED_LIBRARIES
+        설정값으로 저장합니다. 관리자 세션이 아니면 거부합니다 - 이 값은
+        플러그인을 보는 모든 사용자에게 공통 적용되는 전역 설정이라
+        일반 사용자가 바꿀 수 있게 두면 안 됩니다."""
+        if selected_libraries is None:
+            return {"success": False, "error": "selected_libraries가 필요합니다."}
+
+        try:
+            from flask import session
+            if session.get("role") != "admin":
+                return {"success": False, "error": "관리자만 라이브러리 표시 설정을 변경할 수 있습니다."}
+        except Exception:
+            return {"success": False, "error": "권한을 확인할 수 없어 저장을 거부했습니다."}
+
+        try:
+            gateway = self.get_db_gateway(db_type)
+        except Exception as e:
+            return {"success": False, "error": f"설정 저장소에 접근하지 못했습니다: {e}"}
+
+        settings_key = f"PLUGIN_CONFIG_{self.id}"
+        try:
+            current_raw = gateway.get_setting(settings_key, default="{}")
+            current = json.loads(current_raw) if current_raw else {}
+            if not isinstance(current, dict):
+                current = {}
+        except Exception:
+            current = {}
+
+        # 라이브러리를 전부 체크한 경우는 "전체 표시"(기본값)와 동일한
+        # 의미이므로, 나중에 새 라이브러리가 추가돼도 자동으로 보이도록
+        # 특정 이름을 나열하는 대신 빈 문자열로 저장합니다. 이 판단은
+        # 프런트엔드가 이미 하고 있지만(전부 체크 시 빈 배열 전달), 혹시
+        # 모를 경우를 대비해 백엔드에서도 한 번 더 방어적으로 둡니다.
+        current["ALLOWED_LIBRARIES"] = ", ".join(selected_libraries)
+
+        try:
+            gateway.set_setting(settings_key, json.dumps(current, ensure_ascii=False))
+        except Exception as e:
+            return {"success": False, "error": f"설정 저장에 실패했습니다: {e}"}
+
+        # 다음 조회부터 바로 반영되도록, 캐시된 전체 섹션 목록 자체는
+        # 건드릴 필요 없습니다(필터는 조회 시점에 매번 새로 적용되므로).
+        return {"success": True}
 
     def _get_section_items(self, base_url, token, library_key, timeout, page=1, sort_key="", search=""):
         page_size = self.ITEMS_PER_PAGE

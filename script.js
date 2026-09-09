@@ -39,6 +39,14 @@
         els.sidebar = $('plexSidebar');
         els.sidebarToggle = $('plexSidebarToggle');
         els.searchInput = $('plexSearchInput');
+        els.libraryPrefsBtn = $('plexLibraryPrefsBtn');
+        els.libraryPrefsOverlay = $('plexLibraryPrefsOverlay');
+        els.libraryPrefsClose = $('plexLibraryPrefsClose');
+        els.libraryPrefsList = $('plexLibraryPrefsList');
+        els.libraryPrefsSelectAll = $('plexLibraryPrefsSelectAll');
+        els.libraryPrefsSelectNone = $('plexLibraryPrefsSelectNone');
+        els.libraryPrefsSave = $('plexLibraryPrefsSave');
+        els.libraryPrefsStatus = $('plexLibraryPrefsStatus');
     }
 
     // 플레이어(미니 플레이어) 관련 엘리먼트는 항상 특정 overlay 노드
@@ -219,6 +227,101 @@
                 return '<option value="' + escapeHtml(s.key) + '" data-type="' + escapeHtml(s.type) + '" data-title="' + escapeHtml(s.title) + '">' +
                     escapeHtml(s.title) + '</option>';
             }).join('');
+    }
+
+    // ------------------------------------------------------------------
+    // 라이브러리 표시 설정 (체크박스 모달)
+    // ------------------------------------------------------------------
+    async function openLibraryPrefs() {
+        els.libraryPrefsOverlay.style.display = 'flex';
+        els.libraryPrefsList.innerHTML = '<div class="plex-empty">불러오는 중...</div>';
+        els.libraryPrefsStatus.textContent = '';
+
+        var data = await callPlugin('library_prefs');
+        if (!data.success) {
+            els.libraryPrefsList.innerHTML = '<div class="plex-error">' + escapeHtml(data.error || '불러오지 못했습니다.') + '</div>';
+            return;
+        }
+
+        var sections = data.sections || [];
+        // selected가 null이면 "설정 안 함 = 전체 표시" 상태이므로 전부
+        // 체크된 것으로 그립니다.
+        var selectedSet = null;
+        if (Array.isArray(data.selected)) {
+            selectedSet = {};
+            data.selected.forEach(function (name) { selectedSet[name] = true; });
+        }
+
+        if (sections.length === 0) {
+            els.libraryPrefsList.innerHTML = '<div class="plex-empty">Plex 서버에 영화/TV 라이브러리가 없습니다.</div>';
+            return;
+        }
+
+        els.libraryPrefsList.innerHTML = '';
+        sections.forEach(function (s) {
+            var label = document.createElement('label');
+            label.className = 'plex-library-prefs-item';
+
+            var checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = s.title || '';
+            checkbox.checked = selectedSet ? !!selectedSet[s.title] : true;
+
+            var titleSpan = document.createElement('span');
+            titleSpan.textContent = s.title || '';
+
+            var typeSpan = document.createElement('span');
+            typeSpan.className = 'plex-library-prefs-type';
+            typeSpan.textContent = s.type === 'show' ? 'TV' : '영화';
+
+            label.appendChild(checkbox);
+            label.appendChild(titleSpan);
+            label.appendChild(typeSpan);
+            els.libraryPrefsList.appendChild(label);
+        });
+    }
+
+    function closeLibraryPrefs() {
+        els.libraryPrefsOverlay.style.display = 'none';
+    }
+
+    function setAllLibraryPrefsCheckboxes(checked) {
+        var boxes = els.libraryPrefsList.querySelectorAll('input[type="checkbox"]');
+        boxes.forEach(function (box) { box.checked = checked; });
+    }
+
+    async function saveLibraryPrefs() {
+        var boxes = els.libraryPrefsList.querySelectorAll('input[type="checkbox"]');
+        var total = boxes.length;
+        var checkedTitles = [];
+        boxes.forEach(function (box) {
+            if (box.checked) checkedTitles.push(box.value);
+        });
+
+        // 전부 선택한 경우 특정 이름을 나열하지 않고 "전체 표시"(빈 배열)로
+        // 저장합니다. 나중에 Plex에 라이브러리가 추가돼도 자동으로 목록에
+        // 나타나게 하기 위해서입니다.
+        if (checkedTitles.length === 0) {
+            alert('최소 1개 이상의 라이브러리를 선택해주세요.\n(전부 해제하면 "전체 표시"와 구분할 수 없어 저장할 수 없습니다.)');
+            return;
+        }
+        var toSave = (total > 0 && checkedTitles.length === total) ? [] : checkedTitles;
+
+        els.libraryPrefsStatus.textContent = '저장 중...';
+        els.libraryPrefsSave.disabled = true;
+        var data = await callPlugin('save_library_prefs', { selected_libraries: JSON.stringify(toSave) });
+        els.libraryPrefsSave.disabled = false;
+
+        if (!data.success) {
+            els.libraryPrefsStatus.textContent = '';
+            alert(data.error || '저장에 실패했습니다.');
+            return;
+        }
+
+        els.libraryPrefsStatus.textContent = '';
+        closeLibraryPrefs();
+        // 드롭다운을 새 설정 기준으로 다시 채웁니다.
+        await loadSections();
     }
 
     async function onLibraryChange() {
@@ -900,6 +1003,21 @@
         } catch (e) {
             // 위와 동일한 이유로 무시
         }
+
+        // 라이브러리 표시 설정 모달
+        els.libraryPrefsBtn.addEventListener('click', openLibraryPrefs);
+        els.libraryPrefsClose.addEventListener('click', closeLibraryPrefs);
+        els.libraryPrefsSelectAll.addEventListener('click', function () {
+            setAllLibraryPrefsCheckboxes(true);
+        });
+        els.libraryPrefsSelectNone.addEventListener('click', function () {
+            setAllLibraryPrefsCheckboxes(false);
+        });
+        els.libraryPrefsSave.addEventListener('click', saveLibraryPrefs);
+        els.libraryPrefsOverlay.addEventListener('click', function (e) {
+            // 모달 바깥(반투명 배경) 클릭 시 닫기
+            if (e.target === els.libraryPrefsOverlay) closeLibraryPrefs();
+        });
 
         // 기본(인라인) 모드는 카테고리 페이지 안에서 재생되므로, 다른
         // 카테고리로 이동하면 이 페이지 컨테이너 자체가 사라지면서 자연히

@@ -588,3 +588,128 @@
         min-height: 320px;
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* 라이브러리 표시 설정 버튼/모달 (체크박스)                              */
+/* ------------------------------------------------------------------ */
+.plex-icon-btn {
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    background: var(--app-input-bg);
+    border: 1px solid var(--app-border);
+    color: var(--app-text-primary);
+    cursor: pointer;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.plex-icon-btn:hover {
+    background: var(--app-bg-card-hover);
+}
+
+.plex-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.plex-modal {
+    width: 420px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 64px);
+    background: var(--app-bg-card);
+    border: 1px solid var(--app-border);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+
+.plex-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--app-bg-sidebar);
+    color: var(--app-text-primary);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.plex-modal-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0.75rem 1rem;
+    gap: 0.6rem;
+    overflow: hidden;
+}
+
+.plex-modal-actions-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.plex-modal-actions-row .plex-back-btn {
+    font-size: 0.78rem;
+    padding: 0.3rem 0.6rem;
+}
+
+.plex-library-prefs-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    border: 1px solid var(--app-border-light);
+    border-radius: 6px;
+    padding: 0.4rem;
+}
+
+.plex-library-prefs-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--app-text-primary);
+}
+
+.plex-library-prefs-item:hover {
+    background: var(--app-bg-card-hover);
+}
+
+.plex-library-prefs-item input {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.plex-library-prefs-item .plex-library-prefs-type {
+    margin-left: auto;
+    font-size: 0.7rem;
+    color: var(--app-text-muted);
+}
+
+.plex-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    padding: 0.6rem 1rem;
+    border-top: 1px solid var(--app-border-light);
+}
