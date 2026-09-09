@@ -57,6 +57,10 @@
             <button id="plexPlayerClose" class="plex-player-close" aria-label="닫기">&times;</button>
         </div>
         <video id="plexVideoEl" class="plex-video" controls autoplay playsinline></video>
+        <div id="plexPlayerLoading" class="plex-player-loading-overlay" style="display:none;">
+            <div class="plex-player-spinner"></div>
+            <div id="plexPlayerLoadingText" class="plex-player-loading-text">동영상을 준비하고 있습니다...</div>
+        </div>
         <div id="plexPlayerResizeHandle" class="plex-player-resize-handle" title="드래그해서 크기 조절(미니창 모드에서만)"></div>
     </div>
 </div>

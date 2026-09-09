@@ -55,6 +55,32 @@
         els.playerTitle = overlay.querySelector('#plexPlayerTitle');
         els.playerClose = overlay.querySelector('#plexPlayerClose');
         els.miniToggleBtn = overlay.querySelector('#plexPlayerMiniToggle');
+        els.playerLoading = overlay.querySelector('#plexPlayerLoading');
+        els.playerLoadingText = overlay.querySelector('#plexPlayerLoadingText');
+
+        // video 엘리먼트는 미니창 모드에서 카테고리 페이지를 넘나들어도
+        // DOM에서 재사용되므로(persistentOverlay), 재방문할 때마다 이
+        // 리스너가 중복으로 쌓이지 않도록 엘리먼트 자체에 플래그를 남겨
+        // 한 번만 등록합니다.
+        if (els.video && !els.video.__plexLoadingBound) {
+            els.video.__plexLoadingBound = true;
+            els.video.addEventListener('loadeddata', hidePlayerLoading);
+            els.video.addEventListener('playing', hidePlayerLoading);
+            els.video.addEventListener('error', hidePlayerLoading);
+        }
+    }
+
+    function showPlayerLoading(text) {
+        if (!els.playerLoading) return;
+        if (els.playerLoadingText) {
+            els.playerLoadingText.textContent = text || '동영상을 준비하고 있습니다...';
+        }
+        els.playerLoading.style.display = 'flex';
+    }
+
+    function hidePlayerLoading() {
+        if (!els.playerLoading) return;
+        els.playerLoading.style.display = 'none';
     }
 
     function setLoading(isLoading) {
@@ -415,22 +441,33 @@
     // 재생
     // ------------------------------------------------------------------
     async function playVideo(ratingKey, title) {
+        // 사용자가 클릭한 즉시 재생 영역을 열고 로딩 표시부터 보여줍니다.
+        // 백엔드의 /play 조회(Plex 트랜스코드 사전 검증 포함)와 프록시 URL
+        // 발급에도 몇 초씩 걸릴 수 있어서, 이 단계부터 "뭔가 진행 중"임을
+        // 보여주지 않으면 검은 화면만 한동안 보여 멈춘 것처럼 느껴집니다.
+        openPlayerShell(title);
+        showPlayerLoading('재생 정보를 확인하고 있습니다...');
+
         setLoading(true);
         var data = await callPlugin('play', { rating_key: ratingKey });
         setLoading(false);
 
         if (!data.success) {
+            closePlayer();
             alert(data.error || '재생 정보를 가져오지 못했습니다.');
             return;
         }
 
         if (!window.BookOasisPlugin || !window.BookOasisPlugin.getStreamProxyUrl) {
+            closePlayer();
             alert('현재 앱 환경에서는 스트리밍 프록시 기능을 사용할 수 없습니다.');
             return;
         }
 
+        showPlayerLoading('동영상을 캐싱하고 있습니다...');
         var proxyUrl = await window.BookOasisPlugin.getStreamProxyUrl(data.stream_url);
         if (!proxyUrl) {
+            closePlayer();
             alert('Plex 서버 주소가 외부 도메인 화이트리스트에 없습니다.\n설정 > 외부 도메인에서 Plex 서버 주소(호스트)를 등록해주세요.');
             return;
         }
@@ -512,6 +549,19 @@
         }
     }
 
+    // 재생 URL이 준비되기 전에도(백엔드 조회/프록시 URL 발급 대기 중) 우선
+    // 재생 영역부터 열어 로딩 상태를 보여주기 위한 "껍데기" 초기화입니다.
+    // 이미 열려 있는 상태에서 다시 호출해도 안전합니다(멱등).
+    function openPlayerShell(title) {
+        els.playerTitle.textContent = title || '';
+        if (!els.overlay.classList.contains('plex-mode-inline') && !els.overlay.classList.contains('plex-mode-mini')) {
+            setPlayerMode('inline');
+        }
+        els.overlay.style.display = 'flex';
+        state.isPlaying = true;
+        updatePlaceholderVisibility();
+    }
+
     async function openPlayer(url, title) {
         var HlsCtor = null;
         try {
@@ -524,25 +574,15 @@
         var canUseNativeHls = els.video.canPlayType('application/vnd.apple.mpegurl');
 
         if (!canUseHlsJs && !canUseNativeHls) {
+            closePlayer();
             alert('영상 재생 라이브러리(hls.js)를 불러오지 못했거나, 이 브라우저가 HLS 재생을 지원하지 않습니다.\n' +
                 '네트워크 상태를 확인하거나 광고 차단/보안 확장 프로그램을 잠시 꺼본 뒤 다시 시도해주세요.');
             return;
         }
 
-        // 재생 가능함이 확인된 뒤에만 모달을 띄웁니다 (이전에는 이 체크보다
-        // 먼저 오버레이가 열려서, 재생 불가 상황에도 빈 검은 화면 모달만
-        // 뜨는 문제가 있었습니다).
-        els.playerTitle.textContent = title || '';
-
-        // 아직 모드가 정해진 적이 없으면(이 오버레이로 첫 재생) 기본값인
-        // 인라인 모드로 시작합니다. 이미 모드가 있으면(예: 미니창으로
-        // 전환해둔 상태에서 다른 영상을 새로 재생) 그 모드를 그대로 유지합니다.
-        if (!els.overlay.classList.contains('plex-mode-inline') && !els.overlay.classList.contains('plex-mode-mini')) {
-            setPlayerMode('inline');
-        }
-        els.overlay.style.display = 'flex';
-        state.isPlaying = true;
-        updatePlaceholderVisibility();
+        // 재생 가능함이 확인된 뒤 재생 영역을 엽니다 (playVideo에서 이미
+        // 열어뒀다면 이 호출은 아무 것도 바꾸지 않는 멱등 호출입니다).
+        openPlayerShell(title);
 
         if (window.__plexHls) {
             window.__plexHls.destroy();
@@ -629,6 +669,7 @@
                 }
 
                 if (data && data.fatal) {
+                    hidePlayerLoading();
                     alert('영상 재생 중 오류가 발생했습니다.\n' +
                         (data.details || data.type || '알 수 없는 오류') +
                         '\n\n브라우저 개발자 도구 콘솔에서 자세한 내용을 확인해주세요.');
@@ -646,6 +687,7 @@
                         window.__plexHls.destroy();
                         window.__plexHls = null;
                     }
+                    hidePlayerLoading();
                     alert('영상 재생을 시작하지 못했습니다 (반복 오류).\n' +
                         '마지막 오류: ' + (data.details || data.type || '알 수 없는 오류') +
                         '\n\n브라우저 개발자 도구 콘솔에서 [PlexPlugin] HLS 오류 로그를 확인해주세요.');
@@ -672,6 +714,7 @@
             window.__plexHls.destroy();
             window.__plexHls = null;
         }
+        hidePlayerLoading();
         els.overlay.style.display = 'none';
         state.isPlaying = false;
         updatePlaceholderVisibility();
