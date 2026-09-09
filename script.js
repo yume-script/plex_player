@@ -16,6 +16,8 @@
         page: 1,
         totalPages: 1,
         sort: 'added_desc', // '' | 'title_asc' | 'title_desc' | 'added_desc' | 'added_asc' | 'release_desc' | 'release_asc'
+        search: '',
+        isPlaying: false,
     };
 
     var els = {};
@@ -33,6 +35,10 @@
         els.grid = $('plexGrid');
         els.pagination = $('plexPagination');
         els.inlineSlot = $('plexInlinePlayerSlot');
+        els.placeholder = $('plexPlayerPlaceholder');
+        els.sidebar = $('plexSidebar');
+        els.sidebarToggle = $('plexSidebarToggle');
+        els.searchInput = $('plexSearchInput');
     }
 
     // 플레이어(미니 플레이어) 관련 엘리먼트는 항상 특정 overlay 노드
@@ -192,6 +198,10 @@
     async function onLibraryChange() {
         var opt = els.select.options[els.select.selectedIndex];
         var key = els.select.value;
+        // 다른 라이브러리로 넘어가면 이전 검색어가 남아있어 혼란을 주지
+        // 않도록 초기화합니다.
+        state.search = '';
+        if (els.searchInput) els.searchInput.value = '';
         if (!key) {
             state.view = 'sections';
             renderBreadcrumb();
@@ -213,7 +223,7 @@
         setLoading(true);
         els.grid.innerHTML = '';
         els.pagination.innerHTML = '';
-        var data = await callPlugin('videos', { library_key: state.libraryKey, page: page, sort: state.sort });
+        var data = await callPlugin('videos', { library_key: state.libraryKey, page: page, sort: state.sort, search: state.search });
         setLoading(false);
 
         if (!data.success) {
@@ -246,7 +256,7 @@
         setLoading(true);
         els.grid.innerHTML = '';
         els.pagination.innerHTML = '';
-        var data = await callPlugin('episodes', { rating_key: item.rating_key, page: page, sort: state.sort });
+        var data = await callPlugin('episodes', { rating_key: item.rating_key, page: page, sort: state.sort, search: state.search });
         setLoading(false);
 
         if (!data.success) {
@@ -286,11 +296,11 @@
         var thumbTargets = [];
 
         items.forEach(function (item) {
-            var card = document.createElement('div');
-            card.className = 'plex-card';
+            var row = document.createElement('div');
+            row.className = 'plex-list-item';
 
             var thumbWrap = document.createElement('div');
-            thumbWrap.className = 'plex-card-thumb-wrap';
+            thumbWrap.className = 'plex-list-thumb';
 
             var img = document.createElement('img');
             img.loading = 'lazy';
@@ -300,40 +310,43 @@
                 thumbTargets.push({ path: item.thumb, img: img });
             }
 
-            if (item.type === 'show' && item.leaf_count) {
-                var badge = document.createElement('span');
-                badge.className = 'plex-card-badge';
-                badge.textContent = item.leaf_count + '화';
-                thumbWrap.appendChild(badge);
-            } else if (item.duration_ms) {
-                var badge2 = document.createElement('span');
-                badge2.className = 'plex-card-badge';
-                badge2.textContent = formatDuration(item.duration_ms);
-                thumbWrap.appendChild(badge2);
-            }
-
             var body = document.createElement('div');
-            body.className = 'plex-card-body';
+            body.className = 'plex-list-body';
 
             var title = document.createElement('div');
-            title.className = 'plex-card-title';
+            title.className = 'plex-list-title';
             title.textContent = item.title || '';
             body.appendChild(title);
 
-            if (item.year) {
+            var metaParts = [];
+            if (item.year) metaParts.push(String(item.year));
+            if (item.type === 'show' && item.leaf_count) {
+                metaParts.push(item.leaf_count + '화');
+            } else if (item.duration_ms) {
+                metaParts.push(formatDuration(item.duration_ms));
+            }
+            if (metaParts.length > 0) {
                 var meta = document.createElement('div');
-                meta.className = 'plex-card-meta';
-                meta.textContent = item.year;
+                meta.className = 'plex-list-meta';
+                meta.textContent = metaParts.join(' · ');
                 body.appendChild(meta);
             }
 
-            card.appendChild(thumbWrap);
-            card.appendChild(body);
-            card.addEventListener('click', function () {
+            row.appendChild(thumbWrap);
+            row.appendChild(body);
+
+            if (item.type === 'show') {
+                var badge = document.createElement('span');
+                badge.className = 'plex-list-badge';
+                badge.textContent = 'TV';
+                row.appendChild(badge);
+            }
+
+            row.addEventListener('click', function () {
                 onClickItem(item);
             });
 
-            els.grid.appendChild(card);
+            els.grid.appendChild(row);
         });
 
         loadThumbsBatch(thumbTargets);
@@ -433,6 +446,18 @@
     // 사라지므로 자연스럽게 같이 멈춥니다. 헤더의 "미니창" 버튼을 누르면
     // document.body 아래로 옮겨져 화면 구석에 뜬 채로 다른 카테고리로
     // 이동해도 계속 재생되는 모드로 전환됩니다.
+    // ------------------------------------------------------------------
+    // 재생 영역 플레이스홀더 표시/숨김
+    // ------------------------------------------------------------------
+    // "재생 중이면서 + 지금 인라인 모드"일 때만 플레이스홀더를 숨깁니다.
+    // 그 외(아직 아무것도 안 골랐을 때, 또는 미니창 모드로 빠져서 인라인
+    // 슬롯이 비어있을 때)는 항상 플레이스홀더를 보여줍니다.
+    function updatePlaceholderVisibility() {
+        if (!els.placeholder) return;
+        var shouldShow = !state.isPlaying || !els.overlay.classList.contains('plex-mode-inline');
+        els.placeholder.style.display = shouldShow ? '' : 'none';
+    }
+
     function setPlayerMode(mode, inlineSlotOverride) {
         els.overlay.classList.remove('plex-mode-inline', 'plex-mode-mini');
         els.overlay.classList.add('plex-mode-' + mode);
@@ -442,12 +467,6 @@
             if (els.overlay.parentNode !== document.body) {
                 document.body.appendChild(els.overlay);
             }
-            // 인라인 슬롯이 지금 화면에 남아있다면(같은 카테고리를 보고
-            // 있는 상태) 빈 자리로 접어둡니다.
-            var slotNow = document.getElementById('plexInlinePlayerSlot');
-            if (slotNow) {
-                slotNow.style.display = 'none';
-            }
         } else {
             els.overlay.id = 'plexPlayerOverlay';
             var slot = inlineSlotOverride || els.inlineSlot;
@@ -456,7 +475,6 @@
             }
             if (slot) {
                 els.inlineSlot = slot;
-                slot.style.display = '';
             }
             // 드래그로 옮겨놨던 좌표(오버레이)/리사이즈한 폭(모달)은
             // 인라인에서는 의미가 없으므로 초기화해서 미니창으로 다시
@@ -472,7 +490,10 @@
             els.miniToggleBtn.textContent = mode === 'mini' ? '인라인으로' : '미니창';
             els.miniToggleBtn.title = mode === 'mini' ? '카테고리 페이지 안으로 되돌리기' : '화면 구석의 작은 창으로 전환';
         }
+
+        updatePlaceholderVisibility();
     }
+
 
     function toggleMiniMode() {
         var isMini = els.overlay.classList.contains('plex-mode-mini');
@@ -520,9 +541,8 @@
             setPlayerMode('inline');
         }
         els.overlay.style.display = 'flex';
-        if (els.overlay.classList.contains('plex-mode-inline') && els.inlineSlot) {
-            els.inlineSlot.style.display = '';
-        }
+        state.isPlaying = true;
+        updatePlaceholderVisibility();
 
         if (window.__plexHls) {
             window.__plexHls.destroy();
@@ -653,9 +673,8 @@
             window.__plexHls = null;
         }
         els.overlay.style.display = 'none';
-        if (els.overlay.classList.contains('plex-mode-inline') && els.inlineSlot) {
-            els.inlineSlot.style.display = 'none';
-        }
+        state.isPlaying = false;
+        updatePlaceholderVisibility();
     }
 
     // ------------------------------------------------------------------
@@ -802,6 +821,43 @@
             }
         });
 
+        // 검색창: 입력할 때마다 바로 요청하지 않고 350ms 동안 추가 입력이
+        // 없을 때만 서버(Plex title 필터)에 다시 조회합니다.
+        var searchDebounceTimer = null;
+        els.searchInput.addEventListener('input', function () {
+            var value = els.searchInput.value;
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(function () {
+                state.search = value.trim();
+                if (state.view === 'videos') {
+                    loadVideos(1);
+                } else if (state.view === 'episodes') {
+                    openShow({ title: state.showTitle, rating_key: state.showRatingKey }, 1);
+                }
+            }, 350);
+        });
+
+        // 목록 사이드바 접기/펼치기. 선택 상태는 localStorage에 저장해
+        // 다음 방문 때도 유지합니다.
+        els.sidebarToggle.addEventListener('click', function () {
+            var collapsed = els.sidebar.classList.toggle('collapsed');
+            els.sidebarToggle.classList.toggle('collapsed', collapsed);
+            try {
+                localStorage.setItem('plexPlayerSidebarCollapsed', collapsed ? '1' : '0');
+            } catch (e) {
+                // 프라이빗 모드 등으로 localStorage를 못 쓰는 환경 - 이번
+                // 세션에서만 상태가 유지되지 않을 뿐 기능에는 영향 없음.
+            }
+        });
+        try {
+            if (localStorage.getItem('plexPlayerSidebarCollapsed') === '1') {
+                els.sidebar.classList.add('collapsed');
+                els.sidebarToggle.classList.add('collapsed');
+            }
+        } catch (e) {
+            // 위와 동일한 이유로 무시
+        }
+
         // 기본(인라인) 모드는 카테고리 페이지 안에서 재생되므로, 다른
         // 카테고리로 이동하면 이 페이지 컨테이너 자체가 사라지면서 자연히
         // 같이 멈춥니다(의도된 동작). 반면 "미니창" 버튼으로 전환한
@@ -820,6 +876,13 @@
                 freshOverlay.parentNode.removeChild(freshOverlay);
             }
             cachePlayerEls(persistentOverlay);
+            // 스크립트가 이 페이지 재방문 때마다 새로 실행되므로 state는
+            // 매번 초기화되지만, persistentOverlay가 존재한다는 것
+            // 자체가 "미니창으로 무언가 재생 중"이라는 뜻이므로 이 값을
+            // 다시 true로 맞춰줘야 나중에 "인라인으로" 버튼을 눌렀을 때
+            // 플레이스홀더가 잘못 표시되지 않습니다.
+            state.isPlaying = true;
+            updatePlaceholderVisibility();
         } else {
             cachePlayerEls(freshOverlay);
             setPlayerMode('inline');

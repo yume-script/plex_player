@@ -1,35 +1,52 @@
 <div class="plex-player-container">
-    <div class="plex-toolbar">
-        <label class="plex-label" for="plexLibrarySelect">Plex 라이브러리</label>
-        <select id="plexLibrarySelect" class="plex-select">
-            <option value="">불러오는 중...</option>
-        </select>
+    <div class="plex-layout" id="plexLayout">
+        <div class="plex-main-area">
+            <!-- 기본(인라인) 재생 모드일 때 플레이어가 이 자리에 옮겨져 들어옵니다.
+                 미니창 모드로 전환하면 여기가 아니라 document.body 아래로 옮겨집니다.
+                 재생 중이 아닐 때는 아래 플레이스홀더가 보입니다. -->
+            <div id="plexInlinePlayerSlot" class="plex-inline-player-slot">
+                <div id="plexPlayerPlaceholder" class="plex-player-placeholder">
+                    <div class="plex-placeholder-icon">▶</div>
+                    <div class="plex-placeholder-text">오른쪽 목록에서 재생할 영상을 선택하세요.</div>
+                </div>
+            </div>
+        </div>
 
-        <label class="plex-label" for="plexSortSelect">정렬</label>
-        <select id="plexSortSelect" class="plex-select">
-            <option value="added_desc" selected>최신 등록순</option>
-            <option value="added_asc">오래된 등록순</option>
-            <option value="title_asc">가나다순</option>
-            <option value="title_desc">가나다 역순</option>
-            <option value="release_desc">최신 개봉순</option>
-            <option value="release_asc">오래된 개봉순</option>
-            <option value="">기본순서</option>
-        </select>
+        <button id="plexSidebarToggle" class="plex-sidebar-toggle" type="button" title="목록 접기/펼치기">&rsaquo;</button>
 
-        <button id="plexBackBtn" class="plex-back-btn" style="display:none;">&larr; 뒤로</button>
-        <span id="plexBreadcrumb" class="plex-breadcrumb"></span>
-        <span id="plexLoading" class="plex-loading" style="display:none;">불러오는 중...</span>
+        <div id="plexSidebar" class="plex-sidebar">
+            <div class="plex-sidebar-toolbar">
+                <select id="plexLibrarySelect" class="plex-select">
+                    <option value="">불러오는 중...</option>
+                </select>
+                <select id="plexSortSelect" class="plex-select plex-select-sort">
+                    <option value="added_desc" selected>최신 등록순</option>
+                    <option value="added_asc">오래된 등록순</option>
+                    <option value="title_asc">가나다순</option>
+                    <option value="title_desc">가나다 역순</option>
+                    <option value="release_desc">최신 개봉순</option>
+                    <option value="release_asc">오래된 개봉순</option>
+                    <option value="">기본순서</option>
+                </select>
+            </div>
+
+            <div class="plex-sidebar-subheader">
+                <button id="plexBackBtn" class="plex-back-btn" style="display:none;" type="button">&larr; 뒤로</button>
+                <span id="plexBreadcrumb" class="plex-breadcrumb"></span>
+                <span id="plexLoading" class="plex-loading" style="display:none;">불러오는 중...</span>
+            </div>
+
+            <div class="plex-sidebar-search-row">
+                <input type="text" id="plexSearchInput" class="plex-search-input" placeholder="제목 검색...">
+            </div>
+
+            <div id="plexGrid" class="plex-list">
+                <div class="plex-empty">상단에서 Plex 라이브러리를 선택해주세요.</div>
+            </div>
+
+            <div id="plexPagination" class="plex-pagination"></div>
+        </div>
     </div>
-
-    <!-- 기본(인라인) 재생 모드일 때 플레이어가 이 자리에 옮겨져 들어옵니다.
-         미니창 모드로 전환하면 여기가 아니라 document.body 아래로 옮겨집니다. -->
-    <div id="plexInlinePlayerSlot" class="plex-inline-player-slot" style="display:none;"></div>
-
-    <div id="plexGrid" class="plex-grid">
-        <div class="plex-empty">상단에서 Plex 라이브러리를 선택해주세요.</div>
-    </div>
-
-    <div id="plexPagination" class="plex-pagination"></div>
 </div>
 
 <div id="plexPlayerOverlay" class="plex-player-overlay" style="display:none;">

@@ -88,7 +88,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import requests
 
@@ -212,7 +212,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
     # 카테고리 풀페이지 UI의 RPC 진입점
     # ------------------------------------------------------------------
     def get_dashboard_data(self, db_type, limit=10):
-        action, library_key, rating_key, thumb_path, page, thumb_paths, sort_key = self._read_request_params()
+        action, library_key, rating_key, thumb_path, page, thumb_paths, sort_key, search = self._read_request_params()
 
         cfg = self.get_plugin_config(db_type, default={})
         base_url = (cfg.get("PLEX_URL") or "").strip().rstrip("/")
@@ -230,12 +230,12 @@ class PlexPlayerProvider(BaseMetadataProvider):
         if action == "videos":
             if not library_key:
                 return {"success": False, "error": "library_key가 필요합니다."}
-            return self._get_section_items(base_url, token, library_key, timeout, page, sort_key)
+            return self._get_section_items(base_url, token, library_key, timeout, page, sort_key, search)
 
         if action == "episodes":
             if not rating_key:
                 return {"success": False, "error": "rating_key가 필요합니다."}
-            return self._get_episodes(base_url, token, rating_key, timeout, page, sort_key)
+            return self._get_episodes(base_url, token, rating_key, timeout, page, sort_key, search)
 
         if action == "play":
             if not rating_key:
@@ -264,6 +264,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
             library_key = (request.args.get("library_key") or "").strip()
             rating_key = (request.args.get("rating_key") or "").strip()
             thumb_path = (request.args.get("thumb_path") or "").strip()
+            # 프런트엔드 검색창(제목 필터). 길이만 방어적으로 제한하고
+            # (Plex URL에 그대로 실리는 값이라 과도하게 긴 입력 방지),
+            # 그 외 이스케이프는 요청 시 urllib.parse.quote로 처리합니다.
+            search = (request.args.get("search") or "").strip()[:200]
 
             page = self._safe_int(request.args.get("page"), 1)
             if page < 1:
@@ -287,9 +291,9 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 except (ValueError, TypeError):
                     thumb_paths = []
 
-            return action, library_key, rating_key, thumb_path, page, thumb_paths, sort_key
+            return action, library_key, rating_key, thumb_path, page, thumb_paths, sort_key, search
         except Exception:
-            return "sections", "", "", "", 1, [], "added_desc"
+            return "sections", "", "", "", 1, [], "added_desc", ""
 
     @staticmethod
     def _safe_int(value, default):
@@ -414,7 +418,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
         self._safe_cache_set(cache_key, json.dumps(sections), sub="sections")
         return {"success": True, "sections": sections, "base_url": base_url}
 
-    def _get_section_items(self, base_url, token, library_key, timeout, page=1, sort_key=""):
+    def _get_section_items(self, base_url, token, library_key, timeout, page=1, sort_key="", search=""):
         page_size = self.ITEMS_PER_PAGE
         start = (page - 1) * page_size
         plex_sort = self.SORT_OPTIONS.get(sort_key, "")
@@ -426,6 +430,11 @@ class PlexPlayerProvider(BaseMetadataProvider):
         )
         if plex_sort:
             url += f"&sort={plex_sort}"
+        if search:
+            # Plex의 "title" 쿼리 파라미터는 부분 일치(포함) 검색으로
+            # 동작합니다. quote()로 인코딩해 한글/특수문자/공백을 안전하게
+            # 전달합니다.
+            url += f"&title={quote(search)}"
 
         data = self._request_json(url, timeout)
         if "__error__" in data:
@@ -462,7 +471,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
             "sort": sort_key,
         }
 
-    def _get_episodes(self, base_url, token, rating_key, timeout, page=1, sort_key=""):
+    def _get_episodes(self, base_url, token, rating_key, timeout, page=1, sort_key="", search=""):
         page_size = self.ITEMS_PER_PAGE
         start = (page - 1) * page_size
         plex_sort = self.SORT_OPTIONS.get(sort_key, "")
@@ -474,6 +483,8 @@ class PlexPlayerProvider(BaseMetadataProvider):
         )
         if plex_sort:
             url += f"&sort={plex_sort}"
+        if search:
+            url += f"&title={quote(search)}"
 
         data = self._request_json(url, timeout)
         if "__error__" in data:
