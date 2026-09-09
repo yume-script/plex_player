@@ -263,11 +263,9 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
         if action == "library_prefs":
             # 체크박스 UI용: 현재 필터와 무관하게 항상 전체 라이브러리
-            # 목록 + 지금 선택된 항목을 함께 돌려줍니다.
+            # 목록 + 지금 선택된 항목을 함께 돌려줍니다. (읽기 전용 -
+            # get_plugin_config()로만 조회하며 아무것도 쓰지 않습니다.)
             return self._get_library_prefs(base_url, token, timeout, cfg)
-
-        if action == "save_library_prefs":
-            return self._save_library_prefs(db_type, selected_libraries)
 
         return self._get_sections(base_url, token, timeout, cfg)
 
@@ -500,50 +498,15 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
         return {"success": True, "sections": raw["sections"], "selected": selected}
 
-    def _save_library_prefs(self, db_type, selected_libraries):
-        """체크박스에서 고른 라이브러리 이름 목록을 ALLOWED_LIBRARIES
-        설정값으로 저장합니다. 관리자 세션이 아니면 거부합니다 - 이 값은
-        플러그인을 보는 모든 사용자에게 공통 적용되는 전역 설정이라
-        일반 사용자가 바꿀 수 있게 두면 안 됩니다."""
-        if selected_libraries is None:
-            return {"success": False, "error": "selected_libraries가 필요합니다."}
-
-        try:
-            from flask import session
-            if session.get("role") != "admin":
-                return {"success": False, "error": "관리자만 라이브러리 표시 설정을 변경할 수 있습니다."}
-        except Exception:
-            return {"success": False, "error": "권한을 확인할 수 없어 저장을 거부했습니다."}
-
-        try:
-            gateway = self.get_db_gateway(db_type)
-        except Exception as e:
-            return {"success": False, "error": f"설정 저장소에 접근하지 못했습니다: {e}"}
-
-        settings_key = f"PLUGIN_CONFIG_{self.id}"
-        try:
-            current_raw = gateway.get_setting(settings_key, default="{}")
-            current = json.loads(current_raw) if current_raw else {}
-            if not isinstance(current, dict):
-                current = {}
-        except Exception:
-            current = {}
-
-        # 라이브러리를 전부 체크한 경우는 "전체 표시"(기본값)와 동일한
-        # 의미이므로, 나중에 새 라이브러리가 추가돼도 자동으로 보이도록
-        # 특정 이름을 나열하는 대신 빈 문자열로 저장합니다. 이 판단은
-        # 프런트엔드가 이미 하고 있지만(전부 체크 시 빈 배열 전달), 혹시
-        # 모를 경우를 대비해 백엔드에서도 한 번 더 방어적으로 둡니다.
-        current["ALLOWED_LIBRARIES"] = ", ".join(selected_libraries)
-
-        try:
-            gateway.set_setting(settings_key, json.dumps(current, ensure_ascii=False))
-        except Exception as e:
-            return {"success": False, "error": f"설정 저장에 실패했습니다: {e}"}
-
-        # 다음 조회부터 바로 반영되도록, 캐시된 전체 섹션 목록 자체는
-        # 건드릴 필요 없습니다(필터는 조회 시점에 매번 새로 적용되므로).
-        return {"success": True}
+    # NOTE: 예전에 여기 _save_library_prefs()가 있었습니다 - 체크박스에서
+    # 고른 값을 gateway.set_setting()으로 PLUGIN_CONFIG_{id} 키에 직접
+    # 덮어쓰는 방식이었는데, 실제 배포 환경에서 그 키/저장 방식 추측이
+    # 코어의 실제 설정 저장 구조와 맞지 않아 PLEX_URL/PLEX_TOKEN을 포함한
+    # 기존 설정 전체가 날아가는 사고가 있었습니다. 코어가 문서화된 공식
+    # 저장 API(save-config)를 제공하지만 정확한 요청 형식이 문서에 없어
+    # 안전하게 재현할 수 없으므로, 자동 저장 기능은 완전히 제거하고 체크박스
+    # 결과를 문자열로 보여줘 사용자가 직접 설정 화면에 붙여넣게 하는 방식
+    # (읽기 전용, 아무것도 쓰지 않음)으로 대체했습니다.
 
     def _get_section_items(self, base_url, token, library_key, timeout, page=1, sort_key="", search=""):
         page_size = self.ITEMS_PER_PAGE

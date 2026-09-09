@@ -80,10 +80,20 @@
             <div id="plexLibraryPrefsList" class="plex-library-prefs-list">
                 <div class="plex-empty">불러오는 중...</div>
             </div>
+            <div id="plexLibraryPrefsResultRow" class="plex-library-prefs-result-row" style="display:none;">
+                <div class="plex-library-prefs-result-label">
+                    아래 값을 복사해서 환경설정 &gt; 플러그인 설정 &gt; "표시할 라이브러리" 칸에
+                    붙여넣고 저장하세요.
+                </div>
+                <div class="plex-library-prefs-result-input-row">
+                    <input type="text" id="plexLibraryPrefsResult" class="plex-search-input" readonly>
+                    <button id="plexLibraryPrefsCopy" class="plex-back-btn" type="button">복사</button>
+                </div>
+            </div>
         </div>
         <div class="plex-modal-footer">
             <span id="plexLibraryPrefsStatus" class="plex-loading"></span>
-            <button id="plexLibraryPrefsSave" class="plex-back-btn" type="button">저장</button>
+            <button id="plexLibraryPrefsSave" class="plex-back-btn" type="button">선택값 만들기</button>
         </div>
     </div>
 </div>

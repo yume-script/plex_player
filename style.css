@@ -713,3 +713,25 @@
     padding: 0.6rem 1rem;
     border-top: 1px solid var(--app-border-light);
 }
+
+.plex-library-prefs-result-row {
+    border-top: 1px solid var(--app-border-light);
+    padding-top: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.plex-library-prefs-result-label {
+    font-size: 0.78rem;
+    color: var(--app-text-muted);
+}
+
+.plex-library-prefs-result-input-row {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.plex-library-prefs-result-input-row .plex-search-input {
+    flex: 1;
+}

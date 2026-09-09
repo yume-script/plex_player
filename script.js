@@ -47,6 +47,9 @@
         els.libraryPrefsSelectNone = $('plexLibraryPrefsSelectNone');
         els.libraryPrefsSave = $('plexLibraryPrefsSave');
         els.libraryPrefsStatus = $('plexLibraryPrefsStatus');
+        els.libraryPrefsResultRow = $('plexLibraryPrefsResultRow');
+        els.libraryPrefsResult = $('plexLibraryPrefsResult');
+        els.libraryPrefsCopy = $('plexLibraryPrefsCopy');
     }
 
     // 플레이어(미니 플레이어) 관련 엘리먼트는 항상 특정 overlay 노드
@@ -236,6 +239,7 @@
         els.libraryPrefsOverlay.style.display = 'flex';
         els.libraryPrefsList.innerHTML = '<div class="plex-empty">불러오는 중...</div>';
         els.libraryPrefsStatus.textContent = '';
+        els.libraryPrefsResultRow.style.display = 'none';
 
         var data = await callPlugin('library_prefs');
         if (!data.success) {
@@ -283,6 +287,7 @@
 
     function closeLibraryPrefs() {
         els.libraryPrefsOverlay.style.display = 'none';
+        els.libraryPrefsResultRow.style.display = 'none';
     }
 
     function setAllLibraryPrefsCheckboxes(checked) {
@@ -290,7 +295,13 @@
         boxes.forEach(function (box) { box.checked = checked; });
     }
 
-    async function saveLibraryPrefs() {
+    // 이 플러그인은 자체적으로 설정을 저장할 안전한 방법이 없습니다
+    // (코어의 설정 저장 API는 정확한 요청 형식이 문서화되어 있지 않아,
+    // 예전에 추측으로 직접 썼다가 기존 PLEX_URL/TOKEN 설정이 통째로
+    // 사라지는 사고가 있었습니다). 그래서 체크한 결과를 문자열로만
+    // 보여주고, 실제 저장은 항상 코어의 정식 설정 화면에서 사용자가
+    // 직접 하도록 합니다 - 아무것도 쓰지 않으므로 100% 안전합니다.
+    function saveLibraryPrefs() {
         var boxes = els.libraryPrefsList.querySelectorAll('input[type="checkbox"]');
         var total = boxes.length;
         var checkedTitles = [];
@@ -298,30 +309,35 @@
             if (box.checked) checkedTitles.push(box.value);
         });
 
-        // 전부 선택한 경우 특정 이름을 나열하지 않고 "전체 표시"(빈 배열)로
-        // 저장합니다. 나중에 Plex에 라이브러리가 추가돼도 자동으로 목록에
-        // 나타나게 하기 위해서입니다.
         if (checkedTitles.length === 0) {
-            alert('최소 1개 이상의 라이브러리를 선택해주세요.\n(전부 해제하면 "전체 표시"와 구분할 수 없어 저장할 수 없습니다.)');
-            return;
-        }
-        var toSave = (total > 0 && checkedTitles.length === total) ? [] : checkedTitles;
-
-        els.libraryPrefsStatus.textContent = '저장 중...';
-        els.libraryPrefsSave.disabled = true;
-        var data = await callPlugin('save_library_prefs', { selected_libraries: JSON.stringify(toSave) });
-        els.libraryPrefsSave.disabled = false;
-
-        if (!data.success) {
-            els.libraryPrefsStatus.textContent = '';
-            alert(data.error || '저장에 실패했습니다.');
+            alert('최소 1개 이상의 라이브러리를 선택해주세요.\n(전부 해제하면 "전체 표시"와 구분할 수 없습니다.)');
             return;
         }
 
-        els.libraryPrefsStatus.textContent = '';
-        closeLibraryPrefs();
-        // 드롭다운을 새 설정 기준으로 다시 채웁니다.
-        await loadSections();
+        // 전부 선택한 경우 특정 이름을 나열하지 않고 빈 값(=전체 표시)을
+        // 안내합니다. 나중에 Plex에 라이브러리가 추가돼도 자동으로 목록에
+        // 나타나게 하기 위해서입니다.
+        var resultValue = (total > 0 && checkedTitles.length === total) ? '' : checkedTitles.join(', ');
+
+        els.libraryPrefsResult.value = resultValue;
+        els.libraryPrefsResultRow.style.display = 'block';
+        els.libraryPrefsResult.focus();
+        els.libraryPrefsResult.select();
+    }
+
+    async function copyLibraryPrefsResult() {
+        var value = els.libraryPrefsResult.value;
+        try {
+            await navigator.clipboard.writeText(value);
+            els.libraryPrefsStatus.textContent = '복사됨';
+        } catch (e) {
+            // 클립보드 API를 못 쓰는 환경(권한/HTTPS 아님 등) - 이미 위에서
+            // select()로 선택해뒀으니 사용자가 Ctrl+C로 직접 복사하면 됩니다.
+            els.libraryPrefsResult.focus();
+            els.libraryPrefsResult.select();
+            els.libraryPrefsStatus.textContent = '자동 복사 실패 - 입력창이 선택되어 있으니 Ctrl+C로 복사해주세요.';
+        }
+        setTimeout(function () { els.libraryPrefsStatus.textContent = ''; }, 3000);
     }
 
     async function onLibraryChange() {
@@ -1014,6 +1030,7 @@
             setAllLibraryPrefsCheckboxes(false);
         });
         els.libraryPrefsSave.addEventListener('click', saveLibraryPrefs);
+        els.libraryPrefsCopy.addEventListener('click', copyLibraryPrefsResult);
         els.libraryPrefsOverlay.addEventListener('click', function (e) {
             // 모달 바깥(반투명 배경) 클릭 시 닫기
             if (e.target === els.libraryPrefsOverlay) closeLibraryPrefs();
