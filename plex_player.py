@@ -164,6 +164,12 @@ class PlexPlayerProvider(BaseMetadataProvider):
             ],
         },
         {
+            "key": "ALLOWED_LIBRARIES",
+            "label": "표시할 라이브러리 (쉼표로 구분된 이름, 비워두면 전체 표시)",
+            "type": "text",
+            "default": "",
+        },
+        {
             "key": "MAX_VIDEO_BITRATE",
             "label": "최대 비트레이트 (kbps, 재생 중 버벅이면 낮춰보세요)",
             "type": "number",
@@ -252,7 +258,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 return {"success": False, "error": "thumb_paths가 필요합니다."}
             return self._get_thumbs_batch(base_url, token, thumb_paths, timeout)
 
-        return self._get_sections(base_url, token, timeout)
+        return self._get_sections(base_url, token, timeout, cfg)
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
@@ -382,7 +388,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
         except ValueError as e:
             return {"__error__": f"Plex 응답을 해석하지 못했습니다: {e}"}
 
-    def _get_sections(self, base_url, token, timeout):
+    def _get_sections(self, base_url, token, timeout, cfg=None):
         cache_key = f"sections:{base_url}"
         cached = self._safe_cache_get(cache_key, sub="sections", ttl=self.SECTIONS_CACHE_TTL)
         if cached:
@@ -390,7 +396,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 sections = json.loads(cached)
                 return {
                     "success": True,
-                    "sections": sections,
+                    "sections": self._filter_allowed_sections(sections, cfg),
                     "base_url": base_url,
                 }
             except (ValueError, TypeError):
@@ -415,8 +421,37 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 }
             )
 
+        # 캐시에는 항상 필터링 전 전체 목록을 저장합니다 - "표시할 라이브러리"
+        # 설정을 바꿨을 때 캐시 TTL(5분)이 끝나길 기다리지 않고 바로 다음
+        # 요청부터 반영되도록, 필터는 아래에서 매번 새로 적용합니다.
         self._safe_cache_set(cache_key, json.dumps(sections), sub="sections")
-        return {"success": True, "sections": sections, "base_url": base_url}
+        return {
+            "success": True,
+            "sections": self._filter_allowed_sections(sections, cfg),
+            "base_url": base_url,
+        }
+
+    def _filter_allowed_sections(self, sections, cfg):
+        """설정의 ALLOWED_LIBRARIES(쉼표로 구분된 라이브러리 이름)가 채워져
+        있으면 그 목록에 포함된 라이브러리만 남깁니다. 비어 있으면(기본값)
+        기존 그대로 전체를 반환합니다. 이름 비교는 공백 제거 후 대소문자
+        구분 없이 합니다."""
+        if not cfg:
+            return sections
+
+        raw = (cfg.get("ALLOWED_LIBRARIES") or "").strip()
+        if not raw:
+            return sections
+
+        allowed = {name.strip().lower() for name in raw.split(",") if name.strip()}
+        if not allowed:
+            return sections
+
+        filtered = [s for s in sections if (s.get("title") or "").strip().lower() in allowed]
+        # 설정한 이름이 실제 라이브러리 이름과 하나도 안 맞으면(오타 등)
+        # 목록이 통째로 사라져 당황할 수 있으므로, 이 경우엔 안전하게
+        # 필터링 전 전체 목록으로 폴백합니다.
+        return filtered if filtered else sections
 
     def _get_section_items(self, base_url, token, library_key, timeout, page=1, sort_key="", search=""):
         page_size = self.ITEMS_PER_PAGE
