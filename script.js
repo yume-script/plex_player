@@ -66,6 +66,7 @@
         els.playerTitle = overlay.querySelector('#plexPlayerTitle');
         els.playerClose = overlay.querySelector('#plexPlayerClose');
         els.miniToggleBtn = overlay.querySelector('#plexPlayerMiniToggle');
+        els.sizeBtn = overlay.querySelector('#plexPlayerSizeBtn');
         els.playerLoading = overlay.querySelector('#plexPlayerLoading');
         els.playerLoadingText = overlay.querySelector('#plexPlayerLoadingText');
 
@@ -614,6 +615,42 @@
         els.placeholder.style.display = shouldShow ? '' : 'none';
     }
 
+    // ------------------------------------------------------------------
+    // 미니창 크기 프리셋 (드래그가 번거로운 경우를 위한 버튼 전환)
+    // ------------------------------------------------------------------
+    var MINI_SIZE_PRESETS = [280, 360, 480, 600]; // px, 너비 기준(높이는 16:9 자동)
+    var miniSizeIndex = 1; // 기본값 360px과 동일한 인덱스
+    try {
+        var savedIndex = parseInt(localStorage.getItem('plexPlayerMiniSizeIndex'), 10);
+        if (!isNaN(savedIndex) && savedIndex >= 0 && savedIndex < MINI_SIZE_PRESETS.length) {
+            miniSizeIndex = savedIndex;
+        }
+    } catch (e) {
+        // localStorage 미지원 환경 - 이번 세션은 기본값(360px)으로 시작
+    }
+
+    function applyMiniSizePreset() {
+        var widthPx = MINI_SIZE_PRESETS[miniSizeIndex];
+        els.playerModal.style.width = widthPx + 'px';
+        updateSizeBtnLabel(widthPx);
+    }
+
+    function updateSizeBtnLabel(widthPx) {
+        if (els.sizeBtn) {
+            els.sizeBtn.textContent = '크기 ' + Math.round(widthPx) + 'px';
+        }
+    }
+
+    function cycleMiniSize() {
+        miniSizeIndex = (miniSizeIndex + 1) % MINI_SIZE_PRESETS.length;
+        applyMiniSizePreset();
+        try {
+            localStorage.setItem('plexPlayerMiniSizeIndex', String(miniSizeIndex));
+        } catch (e) {
+            // 무시 - 이번 세션에서만 유지됨
+        }
+    }
+
     function setPlayerMode(mode, inlineSlotOverride) {
         els.overlay.classList.remove('plex-mode-inline', 'plex-mode-mini');
         els.overlay.classList.add('plex-mode-' + mode);
@@ -622,6 +659,14 @@
             els.overlay.id = 'plexPlayerOverlayPersistent';
             if (els.overlay.parentNode !== document.body) {
                 document.body.appendChild(els.overlay);
+            }
+            // 드래그로 임의 크기를 만든 적이 없다면(또는 인라인에서 막
+            // 넘어왔다면) 마지막으로 선택했던(또는 기본) 프리셋 크기부터
+            // 시작합니다. 이미 드래그로 조절해둔 크기가 있으면 그대로
+            // 유지합니다(재생 중 다시 들어왔을 때 크기가 갑자기 바뀌면
+            // 어색하므로).
+            if (!els.playerModal.style.width) {
+                applyMiniSizePreset();
             }
         } else {
             els.overlay.id = 'plexPlayerOverlay';
@@ -645,6 +690,9 @@
         if (els.miniToggleBtn) {
             els.miniToggleBtn.textContent = mode === 'mini' ? '인라인으로' : '미니창';
             els.miniToggleBtn.title = mode === 'mini' ? '카테고리 페이지 안으로 되돌리기' : '화면 구석의 작은 창으로 전환';
+        }
+        if (els.sizeBtn) {
+            els.sizeBtn.style.display = mode === 'mini' ? '' : 'none';
         }
 
         updatePlaceholderVisibility();
@@ -947,6 +995,7 @@
             var maxWidth = window.innerWidth - 24;
             var newWidth = Math.max(minWidth, Math.min(startWidth + dx, maxWidth));
             els.playerModal.style.width = newWidth + 'px';
+            updateSizeBtnLabel(newWidth);
         });
 
         function endResize() {
@@ -1066,6 +1115,7 @@
             setPlayerMode('inline');
             els.playerClose.addEventListener('click', closePlayer);
             els.miniToggleBtn.addEventListener('click', toggleMiniMode);
+            els.sizeBtn.addEventListener('click', cycleMiniSize);
             makePlayerDraggable();
             makePlayerResizable();
         }
