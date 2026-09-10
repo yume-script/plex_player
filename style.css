@@ -381,42 +381,19 @@
 }
 
 /* ------------------------------------------------------------------ */
-/* 재생 창 (인라인/미니창 공통)                                          */
+/* 재생 영역 - Document Picture-in-Picture(진짜 별도 브라우저 창)를 쓰므로   */
+/* 더 이상 "인라인/미니창" 두 가지 모드를 CSS로 흉내낼 필요가 없습니다.     */
+/* 영상은 항상 이 자리에 있다가, 미니창 버튼을 누르면 <video> 노드 자체가  */
+/* 물리적으로 별도 창의 document로 옮겨갑니다(script.js openMiniWindow).   */
 /* ------------------------------------------------------------------ */
-.plex-player-overlay.plex-mode-mini {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 9999;
-}
-
-.plex-player-overlay.plex-mode-inline {
-    position: static;
+.plex-player-area {
     width: 100%;
-}
-
-.plex-player-modal {
+    display: flex;
+    flex-direction: column;
     background: #000;
     border-radius: 10px;
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
     box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
-    position: relative;
-}
-
-.plex-mode-mini .plex-player-modal {
-    width: 360px;
-    max-width: calc(100vw - 24px);
-    min-width: 220px;
-}
-
-.plex-mode-inline .plex-player-modal {
-    width: 100%;
-    /* height는 강제로 100%를 채우지 않고 콘텐츠(헤더 + 16:9 영상) 높이에
-       맞춥니다. 억지로 슬롯 전체 높이를 채우면 영상 아래에 불필요한
-       여백(검은 영역)이 남아 "화면 중간에 영상이 떠 있는" 것처럼
-       보였습니다. */
 }
 
 .plex-player-header {
@@ -428,11 +405,6 @@
     color: var(--app-text-primary);
     user-select: none;
     flex-shrink: 0;
-}
-
-.plex-mode-mini .plex-player-header {
-    cursor: move;
-    touch-action: none;
 }
 
 .plex-player-title {
@@ -471,45 +443,16 @@
     flex-shrink: 0;
 }
 
+.plex-video-wrap {
+    position: relative;
+    width: 100%;
+}
+
 .plex-video {
     width: 100%;
     display: block;
     aspect-ratio: 16 / 9;
     background: #000;
-}
-
-.plex-mode-mini .plex-video {
-    aspect-ratio: 16 / 9;
-    background: #000;
-}
-
-/* 인라인 모드에서도 높이를 flex(100%)로 늘리지 않고 16:9 비율로
-   고정합니다. 부모(.plex-inline-player-slot)가 min-height만 갖고 있어
-   퍼센트 높이가 제대로 계산되지 않으면 비디오가 원본 해상도 그대로(또는
-   비정상적으로 크게) 렌더링되어, 실제 화면 내용이 뷰포트 한참 아래로
-   밀려나 보이는 문제가 있었습니다. aspect-ratio로 고정하면 폭에 맞춰
-   높이가 항상 예측 가능하게 계산됩니다. */
-.plex-mode-inline .plex-video {
-    width: 100%;
-    height: auto;
-    background: #000;
-}
-
-.plex-mode-inline .plex-player-resize-handle {
-    display: none;
-}
-
-.plex-player-resize-handle {
-    position: absolute;
-    right: 0;
-    bottom: 0;
-    width: 18px;
-    height: 18px;
-    cursor: nwse-resize;
-    background:
-        linear-gradient(135deg, transparent 0 45%, rgba(255, 255, 255, 0.55) 45% 55%, transparent 55% 100%);
-    z-index: 2;
-    touch-action: none;
 }
 
 /* ------------------------------------------------------------------ */

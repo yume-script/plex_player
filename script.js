@@ -18,6 +18,8 @@
         sort: 'added_desc', // '' | 'title_asc' | 'title_desc' | 'added_desc' | 'added_asc' | 'release_desc' | 'release_asc'
         search: '',
         isPlaying: false,
+        currentRatingKey: null,
+        currentTitle: '',
     };
 
     var els = {};
@@ -50,36 +52,21 @@
         els.libraryPrefsResultRow = $('plexLibraryPrefsResultRow');
         els.libraryPrefsResult = $('plexLibraryPrefsResult');
         els.libraryPrefsCopy = $('plexLibraryPrefsCopy');
-    }
 
-    // 플레이어(미니 플레이어) 관련 엘리먼트는 항상 특정 overlay 노드
-    // "안에서만" querySelector로 찾습니다. document.getElementById로 전역
-    // 검색하면, 카테고리를 재방문했을 때 body로 옮겨둔 기존(재생 중) 오버레이
-    // 안의 엘리먼트와 새로 주입된 오버레이 안의 동일 id 엘리먼트가 뒤섞여
-    // 어느 쪽을 집었는지 알 수 없게 됩니다.
-    function cachePlayerEls(overlay) {
-        els.overlay = overlay;
-        els.playerModal = overlay.querySelector('#plexPlayerModal');
-        els.playerHeader = overlay.querySelector('#plexPlayerHeader');
-        els.playerResizeHandle = overlay.querySelector('#plexPlayerResizeHandle');
-        els.video = overlay.querySelector('#plexVideoEl');
-        els.playerTitle = overlay.querySelector('#plexPlayerTitle');
-        els.playerClose = overlay.querySelector('#plexPlayerClose');
-        els.miniToggleBtn = overlay.querySelector('#plexPlayerMiniToggle');
-        els.sizeBtn = overlay.querySelector('#plexPlayerSizeBtn');
-        els.playerLoading = overlay.querySelector('#plexPlayerLoading');
-        els.playerLoadingText = overlay.querySelector('#plexPlayerLoadingText');
-
-        // video 엘리먼트는 미니창 모드에서 카테고리 페이지를 넘나들어도
-        // DOM에서 재사용되므로(persistentOverlay), 재방문할 때마다 이
-        // 리스너가 중복으로 쌓이지 않도록 엘리먼트 자체에 플래그를 남겨
-        // 한 번만 등록합니다.
-        if (els.video && !els.video.__plexLoadingBound) {
-            els.video.__plexLoadingBound = true;
-            els.video.addEventListener('loadeddata', hidePlayerLoading);
-            els.video.addEventListener('playing', hidePlayerLoading);
-            els.video.addEventListener('error', hidePlayerLoading);
-        }
+        // 재생 영역. 예전에는 미니창 모드에서 이 전체가 document.body로
+        // 옮겨졌지만(그러다 재방문 시 코어가 그 DOM을 정리해버려 미니창이
+        // 풀리는 버그가 있었습니다), 지금은 브라우저의 진짜 Document
+        // Picture-in-Picture API로 <video> 노드 자체만 별도 창으로
+        // 옮깁니다(openMiniWindow 참고) - 이 컨테이너(plexPlayerArea)
+        // 자신은 절대 이동하지 않고 항상 이 자리에 고정되어 있습니다.
+        els.playerArea = $('plexPlayerArea');
+        els.videoWrap = $('plexVideoWrap');
+        els.video = $('plexVideoEl');
+        els.playerTitle = $('plexPlayerTitle');
+        els.playerClose = $('plexPlayerClose');
+        els.miniBtn = $('plexPlayerMiniBtn');
+        els.playerLoading = $('plexPlayerLoading');
+        els.playerLoadingText = $('plexPlayerLoadingText');
     }
 
     function showPlayerLoading(text) {
@@ -565,6 +552,8 @@
         // 백엔드의 /play 조회(Plex 트랜스코드 사전 검증 포함)와 프록시 URL
         // 발급에도 몇 초씩 걸릴 수 있어서, 이 단계부터 "뭔가 진행 중"임을
         // 보여주지 않으면 검은 화면만 한동안 보여 멈춘 것처럼 느껴집니다.
+        state.currentRatingKey = ratingKey;
+        state.currentTitle = title || '';
         openPlayerShell(title);
         showPlayerLoading('재생 정보를 확인하고 있습니다...');
 
@@ -596,124 +585,182 @@
     }
 
     // ------------------------------------------------------------------
-    // 재생 모드 전환 (인라인 ↔ 미니창)
-    // ------------------------------------------------------------------
-    // 기본은 인라인 모드(카테고리 페이지 안, 이미지 예시의 M3U 플레이어와
-    // 비슷한 큰 영역)입니다. 다른 카테고리로 이동하면 이 페이지 자체가
-    // 사라지므로 자연스럽게 같이 멈춥니다. 헤더의 "미니창" 버튼을 누르면
-    // document.body 아래로 옮겨져 화면 구석에 뜬 채로 다른 카테고리로
-    // 이동해도 계속 재생되는 모드로 전환됩니다.
-    // ------------------------------------------------------------------
     // 재생 영역 플레이스홀더 표시/숨김
     // ------------------------------------------------------------------
-    // "재생 중이면서 + 지금 인라인 모드"일 때만 플레이스홀더를 숨깁니다.
-    // 그 외(아직 아무것도 안 골랐을 때, 또는 미니창 모드로 빠져서 인라인
-    // 슬롯이 비어있을 때)는 항상 플레이스홀더를 보여줍니다.
     function updatePlaceholderVisibility() {
         if (!els.placeholder) return;
-        var shouldShow = !state.isPlaying || !els.overlay.classList.contains('plex-mode-inline');
-        els.placeholder.style.display = shouldShow ? '' : 'none';
+        els.placeholder.style.display = state.isPlaying ? 'none' : '';
     }
 
     // ------------------------------------------------------------------
-    // 미니창 크기 프리셋 (드래그가 번거로운 경우를 위한 버튼 전환)
+    // 미니창 = 브라우저의 진짜 Document Picture-in-Picture API
     // ------------------------------------------------------------------
-    var MINI_SIZE_PRESETS = [280, 360, 480, 600]; // px, 너비 기준(높이는 16:9 자동)
-    var miniSizeIndex = 1; // 기본값 360px과 동일한 인덱스
-    try {
-        var savedIndex = parseInt(localStorage.getItem('plexPlayerMiniSizeIndex'), 10);
-        if (!isNaN(savedIndex) && savedIndex >= 0 && savedIndex < MINI_SIZE_PRESETS.length) {
-            miniSizeIndex = savedIndex;
+    // 예전에는 이 오버레이 전체를 document.body로 옮겨서 "미니창"을
+    // 흉내냈는데, 그 방식은 카테고리를 재방문할 때 코어가 body 하위의
+    // 낯선 요소를 정리해버리면 미니창이 풀리는 문제가 있었습니다.
+    // 대신 window.documentPictureInPicture API로 완전히 별도의 브라우저
+    // 창을 띄우고, <video> 노드 자체를 그 창의 document로 물리적으로
+    // reparent합니다 - hls.js 인스턴스를 새로 만들 필요 없이 그대로
+    // 이어서 재생되고, 이 창은 BookOasis 페이지와 완전히 분리된
+    // top-level browsing context라 BookOasis의 DOM이 어떻게 바뀌든
+    // (카테고리 이동 포함) 전혀 영향을 받지 않습니다. 이 API를 지원하지
+    // 않는 브라우저에서는 <video>의 네이티브 requestPictureInPicture()로
+    // 자동 대체합니다.
+    var docPipWindow = null;
+
+    async function toggleMiniWindow() {
+        if (docPipWindow && !docPipWindow.closed) {
+            docPipWindow.close(); // 뒷정리는 pagehide 핸들러가 담당
+            return;
         }
-    } catch (e) {
-        // localStorage 미지원 환경 - 이번 세션은 기본값(360px)으로 시작
-    }
-
-    function applyMiniSizePreset() {
-        var widthPx = MINI_SIZE_PRESETS[miniSizeIndex];
-        els.playerModal.style.width = widthPx + 'px';
-        updateSizeBtnLabel(widthPx);
-    }
-
-    function updateSizeBtnLabel(widthPx) {
-        if (els.sizeBtn) {
-            els.sizeBtn.textContent = '크기 ' + Math.round(widthPx) + 'px';
+        if (!state.isPlaying) {
+            alert('먼저 영상을 재생해주세요.');
+            return;
         }
+        await openMiniWindow();
     }
 
-    function cycleMiniSize() {
-        miniSizeIndex = (miniSizeIndex + 1) % MINI_SIZE_PRESETS.length;
-        applyMiniSizePreset();
+    async function openMiniWindow() {
+        if (window.documentPictureInPicture && typeof window.documentPictureInPicture.requestWindow === 'function') {
+            try {
+                var pipWindow = await window.documentPictureInPicture.requestWindow({
+                    width: 480,
+                    height: 270,
+                });
+
+                // 미니창은 호스트 페이지의 CSS를 상속하지 않으므로 최소한의
+                // 인라인 스타일만 직접 주입합니다.
+                var style = pipWindow.document.createElement('style');
+                style.textContent =
+                    'html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }' +
+                    '#plexMiniVideoWrap { position:relative; width:100%; height:100%; }' +
+                    '#plexMiniVideoWrap video { width:100%; height:100%; object-fit:contain; background:#000; }' +
+                    '#plexMiniTitleBar { position:absolute; left:0; right:0; bottom:0; padding:4px 10px;' +
+                    ' font:12px -apple-system, BlinkMacSystemFont, sans-serif; color:#fff;' +
+                    ' background:rgba(0,0,0,0.55); white-space:nowrap; overflow:hidden;' +
+                    ' text-overflow:ellipsis; text-align:center; }';
+                pipWindow.document.head.appendChild(style);
+
+                var wrap = pipWindow.document.createElement('div');
+                wrap.id = 'plexMiniVideoWrap';
+                var bar = pipWindow.document.createElement('div');
+                bar.id = 'plexMiniTitleBar';
+                bar.textContent = state.currentTitle || '';
+                wrap.appendChild(bar);
+
+                // 실제 <video> 엘리먼트를 미니창으로 옮깁니다. 새로 만들지
+                // 않고 노드 자체를 reparent하므로 붙어있던 hls.js 인스턴스가
+                // 끊기지 않고 그대로 이어서 재생됩니다.
+                wrap.prepend(els.video);
+                pipWindow.document.body.appendChild(wrap);
+
+                docPipWindow = pipWindow;
+                updateMiniButtonState();
+                attachDocPipCloseHandler(pipWindow);
+            } catch (e) {
+                console.warn('[PlexPlugin] 미니창 열기 실패, 네이티브 PIP로 대체합니다:', e && e.message);
+                await fallbackToNativePip();
+            }
+            return;
+        }
+
+        await fallbackToNativePip();
+    }
+
+    async function fallbackToNativePip() {
+        if (!els.video.requestPictureInPicture) {
+            alert('이 브라우저는 미니창(PIP) 기능을 지원하지 않습니다.');
+            return;
+        }
         try {
-            localStorage.setItem('plexPlayerMiniSizeIndex', String(miniSizeIndex));
+            await els.video.requestPictureInPicture();
         } catch (e) {
-            // 무시 - 이번 세션에서만 유지됨
+            alert('미니창을 여는 데 실패했습니다: ' + (e && e.message ? e.message : e));
         }
     }
 
-    function setPlayerMode(mode, inlineSlotOverride) {
-        els.overlay.classList.remove('plex-mode-inline', 'plex-mode-mini');
-        els.overlay.classList.add('plex-mode-' + mode);
+    // 미니창이 닫힐 때(사용자가 직접 닫거나 close()를 호출한 경우) 비디오를
+    // 원래 자리로 되돌립니다. 이 시점에 카테고리탭 자체가 이미 화면에서
+    // 사라진 상태였다면(=다른 사이드바 메뉴로 이동한 뒤 미니창만 닫은 경우)
+    // 재생을 완전히 정리하고, 여전히 보이는 상태라면 이어서 인라인 재생을
+    // 계속합니다.
+    function attachDocPipCloseHandler(pipWindow) {
+        pipWindow.addEventListener('pagehide', function () {
+            if (els.videoWrap && els.video.parentNode !== els.videoWrap) {
+                els.videoWrap.prepend(els.video);
+            }
+            docPipWindow = null;
+            updateMiniButtonState();
 
-        if (mode === 'mini') {
-            els.overlay.id = 'plexPlayerOverlayPersistent';
-            if (els.overlay.parentNode !== document.body) {
-                document.body.appendChild(els.overlay);
+            if (isHiddenFromView(els.playerArea)) {
+                closePlayer();
             }
-            // 드래그로 임의 크기를 만든 적이 없다면(또는 인라인에서 막
-            // 넘어왔다면) 마지막으로 선택했던(또는 기본) 프리셋 크기부터
-            // 시작합니다. 이미 드래그로 조절해둔 크기가 있으면 그대로
-            // 유지합니다(재생 중 다시 들어왔을 때 크기가 갑자기 바뀌면
-            // 어색하므로).
-            if (!els.playerModal.style.width) {
-                applyMiniSizePreset();
-            }
-        } else {
-            els.overlay.id = 'plexPlayerOverlay';
-            var slot = inlineSlotOverride || els.inlineSlot;
-            if (slot && els.overlay.parentNode !== slot) {
-                slot.appendChild(els.overlay);
-            }
-            if (slot) {
-                els.inlineSlot = slot;
-            }
-            // 드래그로 옮겨놨던 좌표(오버레이)/리사이즈한 폭(모달)은
-            // 인라인에서는 의미가 없으므로 초기화해서 미니창으로 다시
-            // 전환할 때 기본 위치(우하단)부터 시작하게 합니다.
-            els.overlay.style.left = '';
-            els.overlay.style.top = '';
-            els.overlay.style.right = '';
-            els.overlay.style.bottom = '';
-            els.playerModal.style.width = '';
-        }
-
-        if (els.miniToggleBtn) {
-            els.miniToggleBtn.textContent = mode === 'mini' ? '인라인으로' : '미니창';
-            els.miniToggleBtn.title = mode === 'mini' ? '카테고리 페이지 안으로 되돌리기' : '화면 구석의 작은 창으로 전환';
-        }
-        if (els.sizeBtn) {
-            els.sizeBtn.style.display = mode === 'mini' ? '' : 'none';
-        }
-
-        updatePlaceholderVisibility();
+        }, { once: true });
     }
 
+    function updateMiniButtonState() {
+        if (!els.miniBtn) return;
+        var isOpen = !!(docPipWindow && !docPipWindow.closed);
+        els.miniBtn.innerHTML = isOpen
+            ? '<i class="fa-solid fa-window-close"></i> 미니창 닫기'
+            : '<i class="fa-solid fa-clone"></i> 미니창';
+        els.miniBtn.title = isOpen ? '미니창을 닫고 원래 화면으로 되돌리기' : '미니창(PIP)으로 분리해서 보기';
+    }
 
-    function toggleMiniMode() {
-        var isMini = els.overlay.classList.contains('plex-mode-mini');
-        if (isMini) {
-            // 인라인으로 되돌아가려면 지금 화면에 plex_player 카테고리
-            // 페이지가 실제로 떠 있어야 합니다(다른 카테고리를 보는 중이면
-            // 옮겨 넣을 자리가 없음).
-            var slot = document.getElementById('plexInlinePlayerSlot');
-            if (!slot) {
-                alert('인라인 모드로 전환하려면 먼저 "Plex 영상 재생" 카테고리로 이동해주세요.');
-                return;
-            }
-            setPlayerMode('inline', slot);
-        } else {
-            setPlayerMode('mini');
+    // ------------------------------------------------------------------
+    // 카테고리 이동 감지 (BookOasis SPA가 이 화면을 완전히 제거하는지,
+    // class/style로 숨기기만 하는지 문서화돼 있지 않아 두 경우를 모두
+    // 잡는 범용적인 방식을 씁니다)
+    // ------------------------------------------------------------------
+    function isHiddenFromView(el) {
+        if (!el || !document.body.contains(el)) return true; // 완전히 제거됨
+        var node = el;
+        while (node && node !== document.body) {
+            var cs = getComputedStyle(node);
+            if (cs.display === 'none' || cs.visibility === 'hidden') return true;
+            node = node.parentElement;
         }
+        if (el.offsetParent === null && getComputedStyle(el).position !== 'fixed') return true;
+        return false;
+    }
+
+    var navigationObserver = null;
+
+    function setupNavigationCleanupObserver() {
+        var rootEl = document.querySelector('.plex-player-container');
+        if (!rootEl || !rootEl.parentNode) return;
+
+        var checkAndHandle = function () {
+            if (isHiddenFromView(rootEl)) handleContainerRemoved();
+        };
+
+        navigationObserver = new MutationObserver(checkAndHandle);
+        navigationObserver.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style'],
+        });
+    }
+
+    function handleContainerRemoved() {
+        if (navigationObserver) { navigationObserver.disconnect(); navigationObserver = null; }
+
+        if (document.pictureInPictureElement === els.video) {
+            // 네이티브 PIP로 재생 중이면 그대로 유지하고, 사용자가 PIP를
+            // 닫는 시점에 정리합니다.
+            els.video.addEventListener('leavepictureinpicture', closePlayer, { once: true });
+            return;
+        }
+
+        if (docPipWindow && !docPipWindow.closed) {
+            // 미니창(Document PIP)이 열려있는 동안은 다른 사이드바 메뉴로
+            // 이동해도 재생을 유지합니다. 미니창을 닫을 때의 뒷정리는
+            // attachDocPipCloseHandler()의 pagehide 리스너가 담당합니다.
+            return;
+        }
+
+        closePlayer();
     }
 
     // 재생 URL이 준비되기 전에도(백엔드 조회/프록시 URL 발급 대기 중) 우선
@@ -721,13 +768,11 @@
     // 이미 열려 있는 상태에서 다시 호출해도 안전합니다(멱등).
     function openPlayerShell(title) {
         els.playerTitle.textContent = title || '';
-        if (!els.overlay.classList.contains('plex-mode-inline') && !els.overlay.classList.contains('plex-mode-mini')) {
-            setPlayerMode('inline');
-        }
-        els.overlay.style.display = 'flex';
+        els.placeholder.style.display = 'none';
+        els.playerArea.style.display = 'flex';
         state.isPlaying = true;
-        updatePlaceholderVisibility();
     }
+
 
     async function openPlayer(url, title) {
         var HlsCtor = null;
@@ -874,6 +919,12 @@
     }
 
     function closePlayer() {
+        if (docPipWindow && !docPipWindow.closed) {
+            try { docPipWindow.close(); } catch (e) { /* 무시 */ }
+        }
+        if (document.pictureInPictureElement === els.video) {
+            document.exitPictureInPicture().catch(function () {});
+        }
         els.video.pause();
         els.video.removeAttribute('src');
         els.video.load();
@@ -882,132 +933,12 @@
             window.__plexHls = null;
         }
         hidePlayerLoading();
-        els.overlay.style.display = 'none';
+        els.playerArea.style.display = 'none';
         state.isPlaying = false;
+        state.currentRatingKey = null;
         updatePlaceholderVisibility();
     }
 
-    // ------------------------------------------------------------------
-    // 미니 플레이어 드래그 이동
-    // ------------------------------------------------------------------
-    // 전체화면 오버레이 대신 화면 구석에 떠 있는 작은 창이라, 헤더를 잡고
-    // 끌면 원하는 위치로 옮길 수 있게 합니다. 독서 중 방해가 되는 자리에
-    // 있으면 옆으로 치워둘 수 있어야 하니까요. 마우스/터치 둘 다 Pointer
-    // Events 하나로 처리합니다.
-    function makePlayerDraggable() {
-        var dragging = false;
-        var startX = 0;
-        var startY = 0;
-        var startLeft = 0;
-        var startTop = 0;
-
-        els.playerHeader.addEventListener('pointerdown', function (e) {
-            // 인라인 모드에서는 드래그 이동이 의미가 없으니(폭이 페이지에
-            // 고정) 미니창 모드일 때만 동작합니다.
-            if (!els.overlay.classList.contains('plex-mode-mini')) return;
-            // 닫기 버튼/미니창 전환 버튼 클릭은 드래그로 이어지지 않게 제외합니다.
-            if (e.target === els.playerClose || e.target === els.miniToggleBtn) return;
-
-            dragging = true;
-            // 드래그 대상은 반드시 position:fixed인 els.overlay여야 합니다.
-            // els.playerModal은 position:relative라서, 여기에 left/top을
-            // 화면 좌표값(px)으로 그대로 넣으면 "원래 있던 자리 기준
-            // 오프셋"으로 해석되어 엉뚱한 곳으로 튀어버립니다(실제로 겪은
-            // 버그). fixed 요소의 left/top만 뷰포트 기준 절대 좌표로
-            // 동작합니다.
-            var rect = els.overlay.getBoundingClientRect();
-            startX = e.clientX;
-            startY = e.clientY;
-            startLeft = rect.left;
-            startTop = rect.top;
-
-            // 기본 위치는 CSS의 bottom/right로 잡혀 있으므로, 드래그를
-            // 시작하는 순간 현재 화면상 위치를 left/top으로 고정해
-            // 좌표 계산이 꼬이지 않게 합니다.
-            els.overlay.style.left = startLeft + 'px';
-            els.overlay.style.top = startTop + 'px';
-            els.overlay.style.right = 'auto';
-            els.overlay.style.bottom = 'auto';
-
-            try {
-                els.playerHeader.setPointerCapture(e.pointerId);
-            } catch (err) {
-                // 포인터 캡처를 지원하지 않는 환경이면 그냥 무시 - 드래그
-                // 자체는 여전히 동작합니다.
-            }
-        });
-
-        els.playerHeader.addEventListener('pointermove', function (e) {
-            if (!dragging) return;
-            var dx = e.clientX - startX;
-            var dy = e.clientY - startY;
-            var newLeft = startLeft + dx;
-            var newTop = startTop + dy;
-
-            // 창을 화면 밖으로 완전히 끌고 나가서 못 찾게 되는 걸 막기
-            // 위해, 최소한 헤더 일부는 항상 화면 안에 남도록 제한합니다.
-            var minVisible = 60;
-            var maxLeft = window.innerWidth - minVisible;
-            var maxTop = window.innerHeight - 40;
-            newLeft = Math.max(minVisible - els.overlay.offsetWidth, Math.min(newLeft, maxLeft));
-            newTop = Math.max(0, Math.min(newTop, maxTop));
-
-            els.overlay.style.left = newLeft + 'px';
-            els.overlay.style.top = newTop + 'px';
-        });
-
-        function endDrag() {
-            dragging = false;
-        }
-        els.playerHeader.addEventListener('pointerup', endDrag);
-        els.playerHeader.addEventListener('pointercancel', endDrag);
-    }
-
-    // ------------------------------------------------------------------
-    // 미니 플레이어 크기 조절
-    // ------------------------------------------------------------------
-    // 우하단 핸들을 잡고 끌면 창 너비를 바꿉니다. 높이는 직접 계산하지
-    // 않고 video 엘리먼트의 CSS aspect-ratio(16:9)가 너비에 맞춰 자동으로
-    // 따라가게 해서, 드래그 중 화면 비율이 어긋나는 일이 없게 합니다.
-    function makePlayerResizable() {
-        var resizing = false;
-        var startX = 0;
-        var startWidth = 0;
-        var minWidth = 220;
-
-        els.playerResizeHandle.addEventListener('pointerdown', function (e) {
-            if (!els.overlay.classList.contains('plex-mode-mini')) return;
-            resizing = true;
-            startX = e.clientX;
-            startWidth = els.playerModal.getBoundingClientRect().width;
-            try {
-                els.playerResizeHandle.setPointerCapture(e.pointerId);
-            } catch (err) {
-                // 포인터 캡처 미지원 환경 - 크기 조절 자체는 계속 동작합니다.
-            }
-            e.preventDefault();
-            e.stopPropagation();
-        });
-
-        els.playerResizeHandle.addEventListener('pointermove', function (e) {
-            if (!resizing) return;
-            var dx = e.clientX - startX;
-            var maxWidth = window.innerWidth - 24;
-            var newWidth = Math.max(minWidth, Math.min(startWidth + dx, maxWidth));
-            els.playerModal.style.width = newWidth + 'px';
-            updateSizeBtnLabel(newWidth);
-        });
-
-        function endResize() {
-            resizing = false;
-        }
-        els.playerResizeHandle.addEventListener('pointerup', endResize);
-        els.playerResizeHandle.addEventListener('pointercancel', endResize);
-    }
-
-    // ------------------------------------------------------------------
-    // 초기화
-    // ------------------------------------------------------------------
     function init() {
         cacheEls();
         els.select.addEventListener('change', onLibraryChange);
@@ -1085,40 +1016,15 @@
             if (e.target === els.libraryPrefsOverlay) closeLibraryPrefs();
         });
 
-        // 기본(인라인) 모드는 카테고리 페이지 안에서 재생되므로, 다른
-        // 카테고리로 이동하면 이 페이지 컨테이너 자체가 사라지면서 자연히
-        // 같이 멈춥니다(의도된 동작). 반면 "미니창" 버튼으로 전환한
-        // 경우에는 setPlayerMode('mini')가 오버레이를 document.body
-        // 바로 아래로 옮기고 id를 'plexPlayerOverlayPersistent'로
-        // 바꿔두므로, 카테고리를 넘나들어도 이 요소 자체는 사라지지
-        // 않습니다. 그래서 재방문 시엔 그 id로 "이미 미니창으로 떠서
-        // 재생 중인 게 있는지" 판별합니다 - 있으면 방금 새로 주입된 빈
-        // 사본은 지우고 기존 것을 그대로 재사용하고(리스너 중복 방지),
-        // 없으면(최초 진입이거나 지난 세션이 인라인 모드로 끝나 컨테이너와
-        // 함께 정리된 경우) 새로 주입된 것을 인라인 모드로 초기화합니다.
-        var persistentOverlay = document.getElementById('plexPlayerOverlayPersistent');
-        var freshOverlay = document.getElementById('plexPlayerOverlay');
-        if (persistentOverlay) {
-            if (freshOverlay && freshOverlay.parentNode) {
-                freshOverlay.parentNode.removeChild(freshOverlay);
-            }
-            cachePlayerEls(persistentOverlay);
-            // 스크립트가 이 페이지 재방문 때마다 새로 실행되므로 state는
-            // 매번 초기화되지만, persistentOverlay가 존재한다는 것
-            // 자체가 "미니창으로 무언가 재생 중"이라는 뜻이므로 이 값을
-            // 다시 true로 맞춰줘야 나중에 "인라인으로" 버튼을 눌렀을 때
-            // 플레이스홀더가 잘못 표시되지 않습니다.
-            state.isPlaying = true;
-            updatePlaceholderVisibility();
-        } else {
-            cachePlayerEls(freshOverlay);
-            setPlayerMode('inline');
-            els.playerClose.addEventListener('click', closePlayer);
-            els.miniToggleBtn.addEventListener('click', toggleMiniMode);
-            els.sizeBtn.addEventListener('click', cycleMiniSize);
-            makePlayerDraggable();
-            makePlayerResizable();
-        }
+        // 재생 영역은 이제 항상 이 화면 안에 고정되어 있습니다(미니창은
+        // 진짜 별도 브라우저 창으로 분리되므로 이 컨테이너 자체를 옮기거나
+        // 재사용할 필요가 없습니다).
+        els.playerClose.addEventListener('click', closePlayer);
+        els.miniBtn.addEventListener('click', toggleMiniWindow);
+        els.video.addEventListener('loadeddata', hidePlayerLoading);
+        els.video.addEventListener('playing', hidePlayerLoading);
+        els.video.addEventListener('error', hidePlayerLoading);
+        setupNavigationCleanupObserver();
 
         // 첫 재생 클릭 시점의 대기시간을 줄이기 위해 미리 로드를 시작해둡니다.
         // 실패해도(네트워크 등) 여기서는 조용히 무시하고, 실제 재생 시점에

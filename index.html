@@ -1,13 +1,35 @@
 <div class="plex-player-container">
     <div class="plex-layout" id="plexLayout">
         <div class="plex-main-area">
-            <!-- 기본(인라인) 재생 모드일 때 플레이어가 이 자리에 옮겨져 들어옵니다.
-                 미니창 모드로 전환하면 여기가 아니라 document.body 아래로 옮겨집니다.
-                 재생 중이 아닐 때는 아래 플레이스홀더가 보입니다. -->
+            <!-- 재생 중이 아닐 때는 플레이스홀더가, 재생 중일 때는 아래
+                 plexPlayerArea가 보입니다. 영상은 항상 이 자리(plexVideoWrap)
+                 안에 있다가, "미니창" 버튼을 누르면 브라우저의 진짜
+                 Document Picture-in-Picture(또는 네이티브 video PIP)로
+                 물리적으로 옮겨집니다 - 이 창은 BookOasis 페이지와 완전히
+                 분리된 별도의 브라우저 창이라, 카테고리를 이동하거나
+                 BookOasis의 DOM이 어떻게 바뀌든 전혀 영향받지 않고 계속
+                 재생됩니다. -->
             <div id="plexInlinePlayerSlot" class="plex-inline-player-slot">
                 <div id="plexPlayerPlaceholder" class="plex-player-placeholder">
                     <div class="plex-placeholder-icon">▶</div>
                     <div class="plex-placeholder-text">오른쪽 목록에서 재생할 영상을 선택하세요.</div>
+                </div>
+
+                <div id="plexPlayerArea" class="plex-player-area" style="display:none;">
+                    <div class="plex-player-header">
+                        <span id="plexPlayerTitle" class="plex-player-title"></span>
+                        <button id="plexPlayerMiniBtn" class="plex-player-mini-toggle" type="button">
+                            <i class="fa-solid fa-clone"></i> 미니창
+                        </button>
+                        <button id="plexPlayerClose" class="plex-player-close" aria-label="닫기">&times;</button>
+                    </div>
+                    <div id="plexVideoWrap" class="plex-video-wrap">
+                        <video id="plexVideoEl" class="plex-video" controls autoplay playsinline></video>
+                        <div id="plexPlayerLoading" class="plex-player-loading-overlay" style="display:none;">
+                            <div class="plex-player-spinner"></div>
+                            <div id="plexPlayerLoadingText" class="plex-player-loading-text">동영상을 준비하고 있습니다...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -47,23 +69,6 @@
 
             <div id="plexPagination" class="plex-pagination"></div>
         </div>
-    </div>
-</div>
-
-<div id="plexPlayerOverlay" class="plex-player-overlay" style="display:none;">
-    <div class="plex-player-modal" id="plexPlayerModal">
-        <div class="plex-player-header" id="plexPlayerHeader" title="드래그해서 위치 이동(미니창 모드에서만)">
-            <span id="plexPlayerTitle" class="plex-player-title"></span>
-            <button id="plexPlayerSizeBtn" class="plex-player-mini-toggle" type="button" style="display:none;" title="미니창 크기 전환">크기</button>
-            <button id="plexPlayerMiniToggle" class="plex-player-mini-toggle" type="button">미니창</button>
-            <button id="plexPlayerClose" class="plex-player-close" aria-label="닫기">&times;</button>
-        </div>
-        <video id="plexVideoEl" class="plex-video" controls autoplay playsinline></video>
-        <div id="plexPlayerLoading" class="plex-player-loading-overlay" style="display:none;">
-            <div class="plex-player-spinner"></div>
-            <div id="plexPlayerLoadingText" class="plex-player-loading-text">동영상을 준비하고 있습니다...</div>
-        </div>
-        <div id="plexPlayerResizeHandle" class="plex-player-resize-handle" title="드래그해서 크기 조절(미니창 모드에서만)"></div>
     </div>
 </div>
 
