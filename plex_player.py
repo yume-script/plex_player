@@ -186,6 +186,16 @@ class PlexPlayerProvider(BaseMetadataProvider):
             ],
         },
         {
+            "key": "FORCE_TRANSCODE",
+            "label": "항상 트랜스코드 사용 (Direct Play 비활성화 - 문제 생기면 켜서 예전 방식으로)",
+            "type": "select",
+            "default": "0",
+            "options": [
+                {"value": "0", "label": "사용 안 함 (호환되는 파일은 Direct Play로 서버 부하 절감)"},
+                {"value": "1", "label": "항상 트랜스코드"},
+            ],
+        },
+        {
             "key": "REQUEST_TIMEOUT_SEC",
             "label": "Plex API 요청 타임아웃 (초)",
             "type": "number",
@@ -615,6 +625,15 @@ class PlexPlayerProvider(BaseMetadataProvider):
             "sort": sort_key,
         }
 
+    # Direct Play 판별용 화이트리스트. 이 조합이면 Plex를 아예 거치지 않고
+    # (트랜스코드/리먹스 전부 생략) 원본 파일을 그대로 스트리밍합니다.
+    # 브라우저 <video> 태그가 안정적으로 직접 재생할 수 있는 조합만 포함합니다
+    # - mkv/hevc 등은 브라우저 네이티브 지원이 들쭉날쭉해서 제외하고, 그런
+    # 경우는 지금까지처럼 Universal Transcode(HLS)로 안전하게 처리합니다.
+    DIRECT_PLAY_CONTAINERS = {"mp4", "m4v", "mov"}
+    DIRECT_PLAY_VIDEO_CODECS = {"h264", "avc1"}
+    DIRECT_PLAY_AUDIO_CODECS = {"aac"}
+
     def _get_play_info(self, base_url, token, rating_key, cfg, timeout):
         meta_url = f"{base_url}/library/metadata/{rating_key}?X-Plex-Token={token}"
         meta_data = self._request_json(meta_url, timeout)
@@ -627,13 +646,25 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 "success": False,
                 "error": "해당 항목을 Plex에서 찾을 수 없습니다 (rating_key 확인 필요).",
             }
-        title = metas[0].get("title") or ""
+        item = metas[0]
+        title = item.get("title") or ""
+
+        burn_subtitles = str(cfg.get("BURN_SUBTITLES", "1")).strip() != "0"
+        force_transcode = str(cfg.get("FORCE_TRANSCODE", "0")).strip() == "1"
+        direct_url = None if force_transcode else self._try_build_direct_play_url(
+            item, base_url, token, burn_subtitles
+        )
+        if direct_url:
+            return {
+                "success": True,
+                "title": title,
+                "stream_url": direct_url,
+                "is_direct": True,
+            }
 
         resolution = cfg.get("VIDEO_RESOLUTION") or "1920x1080"
         bitrate = self._safe_int(cfg.get("MAX_VIDEO_BITRATE"), 8000)
         client_id = "bookoasis-plex-player"
-
-        burn_subtitles = str(cfg.get("BURN_SUBTITLES", "1")).strip() != "0"
 
         params = {
             "path": f"/library/metadata/{rating_key}",
@@ -672,7 +703,51 @@ class PlexPlayerProvider(BaseMetadataProvider):
             target=self._prewarm_stream, args=(stream_url,), daemon=True
         ).start()
 
-        return {"success": True, "title": title, "stream_url": stream_url}
+        return {"success": True, "title": title, "stream_url": stream_url, "is_direct": False}
+
+    def _try_build_direct_play_url(self, item, base_url, token, burn_subtitles):
+        """항목의 Media/Part 정보를 보고 브라우저가 트랜스코드 없이 그대로
+        재생 가능한 조합(mp4/mov 컨테이너 + h264 + aac)이면 원본 파일 URL을
+        돌려주고, 아니면 None을 돌려줘 호출부가 지금까지처럼 Universal
+        Transcode로 폴백하게 합니다.
+
+        자막 자동 합성(BURN_SUBTITLES)이 켜져 있고 이 항목에 자막 스트림이
+        실제로 있으면, Direct Play는 자막을 화면에 넣어줄 방법이 없으므로
+        (원본 파일을 그대로 서빙할 뿐 아무 처리도 하지 않음) 일부러
+        건너뛰고 트랜스코드 경로로 넘겨 자막이 계속 보이게 합니다."""
+        media_list = item.get("Media") or []
+        if not media_list:
+            return None
+        media = media_list[0]
+
+        container = str(media.get("container") or "").lower()
+        video_codec = str(media.get("videoCodec") or "").lower()
+        audio_codec = str(media.get("audioCodec") or "").lower()
+
+        if container not in self.DIRECT_PLAY_CONTAINERS:
+            return None
+        if video_codec not in self.DIRECT_PLAY_VIDEO_CODECS:
+            return None
+        if audio_codec not in self.DIRECT_PLAY_AUDIO_CODECS:
+            return None
+
+        parts = media.get("Part") or []
+        if not parts:
+            return None
+        part = parts[0]
+
+        if burn_subtitles:
+            streams = part.get("Stream") or []
+            has_subtitle = any(s.get("streamType") == 3 for s in streams)
+            if has_subtitle:
+                return None
+
+        part_key = part.get("key")
+        if not part_key:
+            return None
+
+        sep = "&" if "?" in part_key else "?"
+        return f"{base_url}{part_key}{sep}X-Plex-Token={token}"
 
     def _check_transcode_decision(self, base_url, params, timeout):
         decision_url = f"{base_url}/video/:/transcode/universal/decision?{urlencode(params)}"

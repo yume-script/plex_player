@@ -573,7 +573,7 @@
             return;
         }
 
-        showPlayerLoading('동영상을 캐싱하고 있습니다...');
+        showPlayerLoading(data.is_direct ? '동영상을 불러오고 있습니다...' : '동영상을 캐싱하고 있습니다...');
         var proxyUrl = await window.BookOasisPlugin.getStreamProxyUrl(data.stream_url);
         if (!proxyUrl) {
             closePlayer();
@@ -581,7 +581,7 @@
             return;
         }
 
-        await openPlayer(proxyUrl, title || data.title);
+        await openPlayer(proxyUrl, title || data.title, !!data.is_direct);
     }
 
     // ------------------------------------------------------------------
@@ -774,7 +774,25 @@
     }
 
 
-    async function openPlayer(url, title) {
+    async function openPlayer(url, title, isDirect) {
+        openPlayerShell(title);
+
+        if (window.__plexHls) {
+            window.__plexHls.destroy();
+            window.__plexHls = null;
+        }
+
+        // Direct Play: 백엔드가 이미 브라우저가 그대로 재생 가능한 파일
+        // (mp4/mov + h264/aac)이라고 판단해서 원본 URL을 그대로 줬으므로,
+        // hls.js도 트랜스코드도 필요 없이 <video src>로 바로 재생합니다.
+        if (isDirect) {
+            els.video.src = url;
+            els.video.play().catch(function () {
+                // 자동재생이 차단된 경우 사용자가 직접 재생 버튼을 눌러야 함
+            });
+            return;
+        }
+
         var HlsCtor = null;
         try {
             HlsCtor = await ensureHlsLoaded();
@@ -790,15 +808,6 @@
             alert('영상 재생 라이브러리(hls.js)를 불러오지 못했거나, 이 브라우저가 HLS 재생을 지원하지 않습니다.\n' +
                 '네트워크 상태를 확인하거나 광고 차단/보안 확장 프로그램을 잠시 꺼본 뒤 다시 시도해주세요.');
             return;
-        }
-
-        // 재생 가능함이 확인된 뒤 재생 영역을 엽니다 (playVideo에서 이미
-        // 열어뒀다면 이 호출은 아무 것도 바꾸지 않는 멱등 호출입니다).
-        openPlayerShell(title);
-
-        if (window.__plexHls) {
-            window.__plexHls.destroy();
-            window.__plexHls = null;
         }
 
         if (canUseHlsJs) {
