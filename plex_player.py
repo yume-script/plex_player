@@ -77,6 +77,15 @@ Plex Media Server의 특정 라이브러리(섹션)를 선택해 영상 목록�
   값만 받아 Plex의 sort 쿼리 파라미터(titleSort/addedAt/
   originallyAvailableAt)로 그대로 전달합니다. 프런트엔드가 보낸 임의
   문자열을 그대로 Plex URL에 꽂지 않도록 여기서 한 번 걸러줍니다.
+- DIRECT_BROWSER_PLAYBACK 설정이 켜져 있으면(action=play 응답의
+  browser_direct_playback 플래그) 프런트엔드는 window.BookOasisPlugin.
+  getStreamProxyUrl() 호출을 건너뛰고 stream_url(Plex 서버 주소)로 <video>/
+  hls.js를 바로 연결합니다. 코어 프록시 왕복이 없어져 [설정 > 외부 도메인]
+  화이트리스트 등록도 필요 없어지지만, 그 대가로 사용자의 브라우저(기기)가
+  PLEX_URL로 직접 접속 가능해야 합니다 - 사설 네트워크 IP를 서재 주소로
+  쓰면서 외부에서도 접속하는 환경이라면 기본값(사용 안 함, 프록시 경유)을
+  유지하는 편이 안전합니다. 기본값은 항상 "0"(사용 안 함)이라 기존
+  배포는 이 옵션을 몰라도 지금까지와 동일하게 동작합니다.
 """
 
 import base64
@@ -151,6 +160,20 @@ class PlexPlayerProvider(BaseMetadataProvider):
             "label": "Plex 토큰 (X-Plex-Token)",
             "type": "password",
             "required": True,
+        },
+        {
+            "key": "DIRECT_BROWSER_PLAYBACK",
+            "label": "브라우저 직접 재생 모드 - 켜면 사용자의 브라우저가 코어 스트리밍 프록시를 거치지 "
+                     "않고 Plex 서버 주소로 곧바로 접속해 재생합니다. [설정 > 외부 도메인] 화이트리스트 "
+                     "등록이 필요 없어지지만, 그 대신 사용자의 브라우저(기기)가 Plex 서버 주소로 직접 "
+                     "접속 가능해야 합니다(사설 IP라면 같은 네트워크 안에 있거나 포트포워딩/VPN 등이 "
+                     "되어 있어야 함). 외부에서도 접속하는 서재라면 기본값(사용 안 함)을 권장합니다.",
+            "type": "select",
+            "default": "0",
+            "options": [
+                {"value": "0", "label": "사용 안 함 (기본 - 코어 프록시 경유, 외부 도메인 화이트리스트 필요)"},
+                {"value": "1", "label": "사용 (브라우저 → Plex 직접 연결, 화이트리스트 불필요)"},
+            ],
         },
         {
             "key": "VIDEO_RESOLUTION",
@@ -649,6 +672,13 @@ class PlexPlayerProvider(BaseMetadataProvider):
         item = metas[0]
         title = item.get("title") or ""
 
+        # DIRECT_BROWSER_PLAYBACK: 코어의 스트리밍 프록시(getStreamProxyUrl)를
+        # 거치지 않고 브라우저가 stream_url(=Plex 서버 주소)로 곧바로 접속하게
+        # 할지 여부. 프런트엔드에 그대로 전달해 분기시키며, is_direct(Plex
+        # Direct Play 여부)와는 완전히 별개의 설정입니다 - 헷갈리지 않도록
+        # 응답 키 이름을 다르게 둡니다.
+        browser_direct = str(cfg.get("DIRECT_BROWSER_PLAYBACK", "0")).strip() == "1"
+
         burn_subtitles = str(cfg.get("BURN_SUBTITLES", "1")).strip() != "0"
         force_transcode = str(cfg.get("FORCE_TRANSCODE", "0")).strip() == "1"
         direct_url = None if force_transcode else self._try_build_direct_play_url(
@@ -660,6 +690,7 @@ class PlexPlayerProvider(BaseMetadataProvider):
                 "title": title,
                 "stream_url": direct_url,
                 "is_direct": True,
+                "browser_direct_playback": browser_direct,
             }
 
         resolution = cfg.get("VIDEO_RESOLUTION") or "1920x1080"
@@ -703,7 +734,13 @@ class PlexPlayerProvider(BaseMetadataProvider):
             target=self._prewarm_stream, args=(stream_url,), daemon=True
         ).start()
 
-        return {"success": True, "title": title, "stream_url": stream_url, "is_direct": False}
+        return {
+            "success": True,
+            "title": title,
+            "stream_url": stream_url,
+            "is_direct": False,
+            "browser_direct_playback": browser_direct,
+        }
 
     def _try_build_direct_play_url(self, item, base_url, token, burn_subtitles):
         """항목의 Media/Part 정보를 보고 브라우저가 트랜스코드 없이 그대로

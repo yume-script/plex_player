@@ -568,13 +568,26 @@
             return;
         }
 
+        showPlayerLoading(data.is_direct ? '동영상을 불러오고 있습니다...' : '동영상을 캐싱하고 있습니다...');
+
+        // 설정에서 "브라우저 직접 재생 모드"를 켜둔 경우, 백엔드가 응답에
+        // browser_direct_playback: true를 실어 보냅니다. 이때는 코어의
+        // 스트리밍 프록시(getStreamProxyUrl)를 아예 거치지 않고, 브라우저가
+        // stream_url(Plex 서버 주소)로 곧바로 접속합니다 - 그래서 외부 도메인
+        // 화이트리스트 등록도 필요 없어집니다. 대신 사용자의 브라우저(기기)
+        // 자체가 그 주소로 접속 가능해야 하므로, 실패하면(네트워크 문제 등)
+        // 프록시 모드와는 다른 원인이라는 것을 안내 문구에서 구분해줍니다.
+        if (data.browser_direct_playback) {
+            await openPlayer(data.stream_url, title || data.title, !!data.is_direct);
+            return;
+        }
+
         if (!window.BookOasisPlugin || !window.BookOasisPlugin.getStreamProxyUrl) {
             closePlayer();
             alert('현재 앱 환경에서는 스트리밍 프록시 기능을 사용할 수 없습니다.');
             return;
         }
 
-        showPlayerLoading(data.is_direct ? '동영상을 불러오고 있습니다...' : '동영상을 캐싱하고 있습니다...');
         var proxyUrl = await window.BookOasisPlugin.getStreamProxyUrl(data.stream_url);
         if (!proxyUrl) {
             closePlayer();
