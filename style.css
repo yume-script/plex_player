@@ -417,6 +417,28 @@
     flex: 1;
 }
 
+.plex-player-engine-badge {
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-right: 0.5rem;
+    white-space: nowrap;
+}
+
+.plex-player-engine-badge.is-transcode {
+    background: rgba(245, 158, 11, 0.18);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.plex-player-engine-badge.is-direct {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
 .plex-player-mini-toggle {
     background: none;
     border: 1px solid var(--app-border);

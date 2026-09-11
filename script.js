@@ -63,6 +63,7 @@
         els.videoWrap = $('plexVideoWrap');
         els.video = $('plexVideoEl');
         els.playerTitle = $('plexPlayerTitle');
+        els.engineBadge = $('plexPlayerEngineBadge');
         els.playerClose = $('plexPlayerClose');
         els.miniBtn = $('plexPlayerMiniBtn');
         els.playerLoading = $('plexPlayerLoading');
@@ -774,8 +775,25 @@
     }
 
 
+    function updateEngineBadge(isDirect) {
+        if (!els.engineBadge) return;
+        if (isDirect === null || isDirect === undefined) {
+            els.engineBadge.style.display = 'none';
+            return;
+        }
+        els.engineBadge.style.display = '';
+        if (isDirect) {
+            els.engineBadge.textContent = 'Direct Play';
+            els.engineBadge.className = 'plex-player-engine-badge is-direct';
+        } else {
+            els.engineBadge.textContent = '⚙ 트랜스코드 작동중';
+            els.engineBadge.className = 'plex-player-engine-badge is-transcode';
+        }
+    }
+
     async function openPlayer(url, title, isDirect) {
         openPlayerShell(title);
+        updateEngineBadge(isDirect);
 
         if (window.__plexHls) {
             window.__plexHls.destroy();
@@ -942,6 +960,7 @@
             window.__plexHls = null;
         }
         hidePlayerLoading();
+        updateEngineBadge(null);
         els.playerArea.style.display = 'none';
         state.isPlaying = false;
         state.currentRatingKey = null;
