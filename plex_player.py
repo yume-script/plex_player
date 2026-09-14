@@ -86,10 +86,10 @@ Plex Media Server의 특정 라이브러리(섹션)를 선택해 영상 목록�
   쓰면서 외부에서도 접속하는 환경이라면 기본값(사용 안 함, 프록시 경유)을
   유지하는 편이 안전합니다. 기본값은 항상 "0"(사용 안 함)이라 기존
   배포는 이 옵션을 몰라도 지금까지와 동일하게 동작합니다.
-- 서버가 여러 대인 경우 _get_configured_servers()가 PLEX_URL/PLEX_TOKEN
-  (서버 "0", 하위 호환)과 PLEX_EXTRA_SERVERS(세미콜론으로 구분한
-  "이름|주소|토큰" 목록)를 합쳐 서버 목록을 만듭니다. 프런트엔드는 먼저
-  action=servers로 이 목록을 받아 사이드바에 서버 선택 드롭다운을 그리고
+- 서버가 2대인 경우 _get_configured_servers()가 고정된 두 묶음의 설정 칸
+  (서버 1: PLEX_URL/PLEX_TOKEN/PLEX_SERVER_NAME, 서버 2: PLEX_URL_2/
+  PLEX_TOKEN_2/PLEX_SERVER_NAME_2)에서 주소+토큰이 둘 다 채워진 서버만
+  읽어 목록을 만듭니다. 프런트엔드는 먼저 action=servers로 이 목록을 받아 사이드바에 서버 선택 드롭다운을 그리고
   (서버가 1개뿐이면 드롭다운을 숨김), 이후 모든 요청에 그때 고른 서버의
   key를 server_key 파라미터로 실어 보냅니다. sections/videos/episodes/play/
   thumb(s)/library_prefs는 전부 이 server_key로 골라진 base_url/token을
@@ -160,35 +160,40 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
     config_schema = [
         {
+            "key": "PLEX_SERVER_NAME",
+            "label": "서버 1 이름 (선택, 비워두면 \"서버 1\")",
+            "type": "text",
+            "default": "",
+        },
+        {
             "key": "PLEX_URL",
-            "label": "Plex 서버 주소 (서버 1 / 기본 서버)",
+            "label": "서버 1 주소",
             "type": "text",
             "required": True,
             "default": "",
         },
         {
             "key": "PLEX_TOKEN",
-            "label": "Plex 토큰 (X-Plex-Token) (서버 1 / 기본 서버)",
+            "label": "서버 1 토큰 (X-Plex-Token)",
             "type": "password",
             "required": True,
         },
         {
-            "key": "PLEX_SERVER_NAME",
-            "label": "서버 1 표시 이름 (선택, 서버가 2개 이상일 때 사이드바 드롭다운에 표시됩니다. "
-                     "비워두면 \"기본 서버\"로 표시)",
+            "key": "PLEX_SERVER_NAME_2",
+            "label": "서버 2 이름 (선택, 비워두면 \"서버 2\") - 서버가 1대뿐이면 아래 3칸은 비워두세요.",
             "type": "text",
             "default": "",
         },
         {
-            "key": "PLEX_EXTRA_SERVERS",
-            "label": "추가 Plex 서버 (2번째 서버부터) - 여러 대의 Plex 서버를 동시에 쓸 때 사용합니다. "
-                     "형식: 이름|주소|토큰 을 한 서버당 한 묶음으로 쓰고, 서버가 여러 개면 세미콜론(;)으로 "
-                     "구분하세요. 예) 사무실|http://192.168.0.20:32400|abc123; 부모님댁|http://plex.example.com:32400|xyz789 "
-                     "- 이름은 비워도 되며(예: |http://...|토큰), 그러면 \"서버 2\"처럼 자동으로 번호가 붙습니다. "
-                     "형식이 잘못된 항목(구분자 누락 등)은 조용히 무시됩니다. 비워두면(기본값) 서버 1만 사용하는 "
-                     "지금까지와 동일하게 동작합니다.",
+            "key": "PLEX_URL_2",
+            "label": "서버 2 주소 (선택)",
             "type": "text",
             "default": "",
+        },
+        {
+            "key": "PLEX_TOKEN_2",
+            "label": "서버 2 토큰 (X-Plex-Token) (선택)",
+            "type": "password",
         },
         {
             "key": "DIRECT_BROWSER_PLAYBACK",
@@ -417,41 +422,23 @@ class PlexPlayerProvider(BaseMetadataProvider):
             return default
 
     def _get_configured_servers(self, cfg):
-        """설정에 입력된 모든 Plex 서버 목록을 만듭니다. 서버 "0"은 항상 기존
-        필드인 PLEX_URL/PLEX_TOKEN(+선택적 PLEX_SERVER_NAME)이고, 그 뒤로
-        PLEX_EXTRA_SERVERS에 세미콜론(;)으로 구분해 추가한 서버들이
-        이어집니다. 각 추가 서버 항목은 "이름|주소|토큰" 형식이며, 구분자가
-        부족한(즉 형식이 잘못된) 항목은 조용히 건너뜁니다 - 오타 하나 때문에
-        전체 서버 목록이 깨지는 것보다 안전합니다. 서버 1개(PLEX_URL/TOKEN만
-        설정)만 쓰는 기존 배포는 길이 1짜리 목록을 돌려받아 지금까지와
-        동일하게 동작합니다."""
+        """설정에 입력된 Plex 서버 목록을 만듭니다. 최대 2대까지 고정된 칸
+        (서버 1: PLEX_URL/PLEX_TOKEN/PLEX_SERVER_NAME, 서버 2: PLEX_URL_2/
+        PLEX_TOKEN_2/PLEX_SERVER_NAME_2)에서 읽으며, 주소+토큰이 둘 다 채워진
+        서버만 목록에 포함됩니다. 서버 2 칸을 비워두면(기본값) 서버 1개만
+        쓰는 지금까지와 동일하게 동작합니다."""
         servers = []
 
-        base_url = (cfg.get("PLEX_URL") or "").strip().rstrip("/")
-        token = (cfg.get("PLEX_TOKEN") or "").strip()
-        if base_url and token:
-            name = (cfg.get("PLEX_SERVER_NAME") or "").strip() or "기본 서버"
-            servers.append({"key": "0", "name": name, "base_url": base_url, "token": token})
-
-        extra_raw = (cfg.get("PLEX_EXTRA_SERVERS") or "").strip()
-        if extra_raw:
-            for chunk in extra_raw.split(";"):
-                chunk = chunk.strip()
-                if not chunk:
-                    continue
-                parts = [p.strip() for p in chunk.split("|")]
-                if len(parts) < 3:
-                    continue
-                name, url, tok = parts[0], parts[1].rstrip("/"), parts[2]
-                if not url or not tok:
-                    continue
-                idx = len(servers)
-                servers.append({
-                    "key": str(idx),
-                    "name": name or f"서버 {idx + 1}",
-                    "base_url": url,
-                    "token": tok,
-                })
+        for idx, (url_key, token_key, name_key, default_name) in enumerate([
+            ("PLEX_URL", "PLEX_TOKEN", "PLEX_SERVER_NAME", "서버 1"),
+            ("PLEX_URL_2", "PLEX_TOKEN_2", "PLEX_SERVER_NAME_2", "서버 2"),
+        ]):
+            base_url = (cfg.get(url_key) or "").strip().rstrip("/")
+            token = (cfg.get(token_key) or "").strip()
+            if not base_url or not token:
+                continue
+            name = (cfg.get(name_key) or "").strip() or default_name
+            servers.append({"key": str(idx), "name": name, "base_url": base_url, "token": token})
 
         return servers
 
