@@ -54,6 +54,15 @@
         els.libraryPrefsResultRow = $('plexLibraryPrefsResultRow');
         els.libraryPrefsResult = $('plexLibraryPrefsResult');
         els.libraryPrefsCopy = $('plexLibraryPrefsCopy');
+        els.serverDiscoverBtn = $('plexServerDiscoverBtn');
+        els.serverDiscoverOverlay = $('plexServerDiscoverOverlay');
+        els.serverDiscoverClose = $('plexServerDiscoverClose');
+        els.serverDiscoverToken = $('plexServerDiscoverToken');
+        els.serverDiscoverFetch = $('plexServerDiscoverFetch');
+        els.serverDiscoverList = $('plexServerDiscoverList');
+        els.serverDiscoverResults = $('plexServerDiscoverResults');
+        els.serverDiscoverBuild = $('plexServerDiscoverBuild');
+        els.serverDiscoverStatus = $('plexServerDiscoverStatus');
 
         // 재생 영역. 예전에는 미니창 모드에서 이 전체가 document.body로
         // 옮겨졌지만(그러다 재방문 시 코어가 그 DOM을 정리해버려 미니창이
@@ -404,6 +413,200 @@
             els.libraryPrefsStatus.textContent = '자동 복사 실패 - 입력창이 선택되어 있으니 Ctrl+C로 복사해주세요.';
         }
         setTimeout(function () { els.libraryPrefsStatus.textContent = ''; }, 3000);
+    }
+
+    // ------------------------------------------------------------------
+    // "Plex 계정으로 서버 찾기" (plex.tv 로그인 기반 서버 자동 조회 모달)
+    // ------------------------------------------------------------------
+    // 라이브러리 선택 모달과 같은 이유로, 여기서도 이 플러그인이 설정을
+    // 직접 저장하지는 않습니다 - plex.tv 계정 토큰으로 조회한 서버 후보를
+    // 복사용 칸으로 보여주기만 하고, 실제 저장은 사용자가 정식 설정
+    // 화면에서 서버 1/서버 2 칸에 직접 붙여넣습니다. 입력한 계정 토큰도
+    // 이 모달을 벗어나면(닫거나 새로고침하면) 사라지고 어디에도 남지
+    // 않습니다.
+    var serverDiscoverResults = [];
+
+    function openServerDiscover() {
+        els.serverDiscoverOverlay.style.display = 'flex';
+        els.serverDiscoverToken.value = '';
+        els.serverDiscoverList.innerHTML = '';
+        els.serverDiscoverResults.style.display = 'none';
+        els.serverDiscoverBuild.style.display = 'none';
+        els.serverDiscoverStatus.textContent = '';
+        serverDiscoverResults = [];
+        // 결과 블록만 지우고, 안내 문구(plex-library-prefs-result-label)는 남겨둡니다.
+        var label = els.serverDiscoverResults.querySelector('.plex-library-prefs-result-label');
+        els.serverDiscoverResults.innerHTML = '';
+        if (label) els.serverDiscoverResults.appendChild(label);
+    }
+
+    function closeServerDiscover() {
+        els.serverDiscoverOverlay.style.display = 'none';
+    }
+
+    async function fetchServerDiscover() {
+        var token = els.serverDiscoverToken.value.trim();
+        if (!token) {
+            els.serverDiscoverStatus.textContent = 'plex.tv 계정 토큰을 입력해주세요.';
+            return;
+        }
+
+        els.serverDiscoverList.innerHTML = '<div class="plex-empty">조회 중...</div>';
+        els.serverDiscoverResults.style.display = 'none';
+        els.serverDiscoverBuild.style.display = 'none';
+        els.serverDiscoverStatus.textContent = '';
+
+        var data = await callPlugin('discover_servers', { account_token: token });
+        if (!data || !data.success) {
+            els.serverDiscoverList.innerHTML = '<div class="plex-error">' +
+                escapeHtml((data && data.error) || '서버 조회에 실패했습니다.') + '</div>';
+            return;
+        }
+
+        serverDiscoverResults = data.servers || [];
+        if (serverDiscoverResults.length === 0) {
+            els.serverDiscoverList.innerHTML = '<div class="plex-empty">이 계정으로 접근 가능한 Plex Media Server를 찾지 못했습니다.</div>';
+            return;
+        }
+
+        els.serverDiscoverList.innerHTML = '';
+        serverDiscoverResults.forEach(function (server, idx) {
+            var row = document.createElement('label');
+            row.className = 'plex-library-prefs-item plex-server-discover-item';
+
+            var checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.dataset.serverIdx = String(idx);
+            checkbox.addEventListener('change', onServerDiscoverCheckChange);
+
+            var nameSpan = document.createElement('span');
+            nameSpan.textContent = server.name || ('서버 ' + (idx + 1));
+
+            row.appendChild(checkbox);
+            row.appendChild(nameSpan);
+
+            var candidates = server.candidates || [];
+            if (candidates.length > 1) {
+                var select = document.createElement('select');
+                select.className = 'plex-select plex-server-discover-candidate';
+                select.dataset.serverIdx = String(idx);
+                // 클릭이 상위 label의 체크박스 토글로 번지지 않도록 막습니다.
+                select.addEventListener('click', function (e) { e.stopPropagation(); });
+                candidates.forEach(function (c, cIdx) {
+                    var opt = document.createElement('option');
+                    opt.value = String(cIdx);
+                    opt.textContent = c.uri + (c.local ? ' (로컬)' : c.relay ? ' (릴레이)' : ' (원격)');
+                    select.appendChild(opt);
+                });
+                row.appendChild(select);
+            } else if (candidates.length === 1) {
+                var addrSpan = document.createElement('span');
+                addrSpan.className = 'plex-server-discover-single-addr';
+                addrSpan.textContent = candidates[0].uri + (candidates[0].local ? ' (로컬)' : candidates[0].relay ? ' (릴레이)' : ' (원격)');
+                row.appendChild(addrSpan);
+            }
+
+            els.serverDiscoverList.appendChild(row);
+        });
+
+        els.serverDiscoverBuild.style.display = '';
+    }
+
+    // 설정 칸이 "서버 1"/"서버 2" 둘뿐이라 최대 2개까지만 고를 수 있게 막습니다.
+    function onServerDiscoverCheckChange(e) {
+        var boxes = els.serverDiscoverList.querySelectorAll('input[type="checkbox"]');
+        var checkedCount = 0;
+        boxes.forEach(function (b) { if (b.checked) checkedCount += 1; });
+        if (checkedCount > 2) {
+            e.target.checked = false;
+            els.serverDiscoverStatus.textContent = '서버는 최대 2개까지만 선택할 수 있습니다(서버 1 / 서버 2).';
+            setTimeout(function () { els.serverDiscoverStatus.textContent = ''; }, 3000);
+        }
+    }
+
+    function makeServerDiscoverCopyRow(label, value) {
+        var row = document.createElement('div');
+        row.className = 'plex-server-discover-result-input-row';
+
+        var labelSpan = document.createElement('span');
+        labelSpan.className = 'plex-server-discover-result-field-label';
+        labelSpan.textContent = label;
+
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'plex-search-input';
+        input.readOnly = true;
+        input.value = value;
+
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'plex-back-btn';
+        btn.textContent = '복사';
+        btn.addEventListener('click', async function () {
+            input.focus();
+            input.select();
+            try {
+                await navigator.clipboard.writeText(value);
+                els.serverDiscoverStatus.textContent = label + ' 복사됨';
+            } catch (e) {
+                els.serverDiscoverStatus.textContent = '자동 복사 실패 - 입력창이 선택되어 있으니 Ctrl+C로 복사해주세요.';
+            }
+            setTimeout(function () { els.serverDiscoverStatus.textContent = ''; }, 3000);
+        });
+
+        row.appendChild(labelSpan);
+        row.appendChild(input);
+        row.appendChild(btn);
+        return row;
+    }
+
+    function buildServerDiscoverResults() {
+        var boxes = els.serverDiscoverList.querySelectorAll('input[type="checkbox"]');
+        var checkedIdxs = [];
+        boxes.forEach(function (b) {
+            if (b.checked) checkedIdxs.push(Number(b.dataset.serverIdx));
+        });
+
+        if (checkedIdxs.length === 0) {
+            els.serverDiscoverStatus.textContent = '서버를 최소 1개 선택해주세요.';
+            setTimeout(function () { els.serverDiscoverStatus.textContent = ''; }, 3000);
+            return;
+        }
+
+        // 안내 문구는 남기고 기존 결과 블록만 지웁니다.
+        var label = els.serverDiscoverResults.querySelector('.plex-library-prefs-result-label');
+        els.serverDiscoverResults.innerHTML = '';
+        if (label) els.serverDiscoverResults.appendChild(label);
+
+        checkedIdxs.forEach(function (idx, i) {
+            var server = serverDiscoverResults[idx];
+            if (!server) return;
+
+            var candidates = server.candidates || [];
+            var candSelect = els.serverDiscoverList.querySelector(
+                'select.plex-server-discover-candidate[data-server-idx="' + idx + '"]'
+            );
+            var chosen = candidates[0];
+            if (candSelect) {
+                chosen = candidates[Number(candSelect.value)] || candidates[0];
+            }
+
+            var block = document.createElement('div');
+            block.className = 'plex-server-discover-result-block';
+
+            var heading = document.createElement('div');
+            heading.className = 'plex-server-discover-result-heading';
+            heading.textContent = '서버 ' + (i + 1);
+            block.appendChild(heading);
+
+            block.appendChild(makeServerDiscoverCopyRow('이름', server.name || ('서버 ' + (i + 1))));
+            block.appendChild(makeServerDiscoverCopyRow('주소', chosen ? chosen.uri : ''));
+            block.appendChild(makeServerDiscoverCopyRow('토큰', server.token || ''));
+
+            els.serverDiscoverResults.appendChild(block);
+        });
+
+        els.serverDiscoverResults.style.display = 'block';
     }
 
     async function onLibraryChange() {
@@ -1135,6 +1338,15 @@
         els.libraryPrefsOverlay.addEventListener('click', function (e) {
             // 모달 바깥(반투명 배경) 클릭 시 닫기
             if (e.target === els.libraryPrefsOverlay) closeLibraryPrefs();
+        });
+
+        // "Plex 계정으로 서버 찾기" 모달
+        els.serverDiscoverBtn.addEventListener('click', openServerDiscover);
+        els.serverDiscoverClose.addEventListener('click', closeServerDiscover);
+        els.serverDiscoverFetch.addEventListener('click', fetchServerDiscover);
+        els.serverDiscoverBuild.addEventListener('click', buildServerDiscoverResults);
+        els.serverDiscoverOverlay.addEventListener('click', function (e) {
+            if (e.target === els.serverDiscoverOverlay) closeServerDiscover();
         });
 
         // 재생 영역은 이제 항상 이 화면 안에 고정되어 있습니다(미니창은

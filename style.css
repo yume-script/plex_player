@@ -708,3 +708,91 @@
 .plex-library-prefs-result-input-row .plex-search-input {
     flex: 1;
 }
+
+/* ------------------------------------------------------------------ */
+/* "Plex 계정으로 서버 찾기" 버튼/모달                                     */
+/* ------------------------------------------------------------------ */
+.plex-modal-wide {
+    width: 520px;
+}
+
+.plex-server-discover-intro {
+    font-size: 0.78rem;
+    color: var(--app-text-muted);
+    line-height: 1.5;
+}
+
+.plex-server-discover-token-row {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.plex-server-discover-token-row .plex-search-input {
+    flex: 1;
+}
+
+.plex-server-discover-list {
+    max-height: 220px;
+}
+
+.plex-server-discover-item {
+    flex-wrap: wrap;
+}
+
+.plex-server-discover-candidate {
+    flex: 1 1 100%;
+    margin-left: 1.6rem; /* 체크박스 아래로 자연스럽게 이어지도록 */
+    width: calc(100% - 1.6rem);
+}
+
+.plex-server-discover-single-addr {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--app-text-muted);
+    word-break: break-all;
+}
+
+.plex-server-discover-results {
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.plex-server-discover-result-block {
+    border: 1px solid var(--app-border-light);
+    border-radius: 6px;
+    padding: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.plex-server-discover-result-heading {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--app-text-primary);
+}
+
+.plex-server-discover-result-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.plex-server-discover-result-input-row .plex-server-discover-result-field-label {
+    flex-shrink: 0;
+    width: 34px;
+    font-size: 0.75rem;
+    color: var(--app-text-muted);
+}
+
+.plex-server-discover-result-input-row .plex-search-input {
+    flex: 1;
+    font-size: 0.78rem;
+}
+
+.plex-server-discover-result-input-row .plex-back-btn {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.5rem;
+}

@@ -97,6 +97,15 @@ Plex Media Server의 특정 라이브러리(섹션)를 선택해 영상 목록�
   base_url이 포함돼 있어 서버별로 자동으로 분리됩니다. server_key가
   비어있거나 유효하지 않으면 항상 첫 번째 서버로 폴백하므로, 구버전
   프런트엔드나 서버가 1개뿐인 배포는 이 파라미터 없이도 그대로 동작합니다.
+- action=discover_servers("Plex 계정으로 서버 찾기" 모달)는 서버 설정 여부와
+  무관하게 항상 처리됩니다(_get_configured_servers보다 먼저 분기) - 설정이
+  텅 빈 첫 설치 상태에서도 이 모달로 주소/토큰 후보를 찾을 수 있어야 하기
+  때문입니다. _discover_plex_servers()는 요청으로 받은 plex.tv 계정 토큰으로
+  plex.tv/api/v2/resources를 호출해 그 계정이 접근 가능한 서버 목록(이름,
+  서버별 접속 토큰, 로컬/릴레이 등 연결 후보 주소들)을 돌려줄 뿐, 그 토큰이나
+  결과를 어디에도 저장하지 않습니다 - 실제 PLEX_URL/PLEX_TOKEN(_2) 설정 저장은
+  이 플러그인이 못 하므로(설정 저장 API 없음, 위 참고), 프런트엔드가 결과를
+  복사용 텍스트 칸으로 보여주면 사용자가 정식 설정 화면에 직접 붙여넣습니다.
 """
 
 import base64
@@ -289,17 +298,28 @@ class PlexPlayerProvider(BaseMetadataProvider):
     def get_dashboard_data(self, db_type, limit=10):
         (
             action, library_key, rating_key, thumb_path, page, thumb_paths,
-            sort_key, search, selected_libraries, server_key,
+            sort_key, search, selected_libraries, server_key, account_token,
         ) = self._read_request_params()
 
         cfg = self.get_plugin_config(db_type, default={})
+
+        if action == "discover_servers":
+            # "서버 자동 조회" 모달 전용 - 아직 서버가 하나도 설정되지 않은
+            # 첫 설치 상태에서도 써야 하므로, 아래의 "설정된 서버 없음" 게이트
+            # 보다 먼저 처리합니다. plex.tv 계정 토큰은 요청 파라미터로만
+            # 받고 어디에도 저장하지 않습니다.
+            timeout = self._safe_int(cfg.get("REQUEST_TIMEOUT_SEC"), 10)
+            return self._discover_plex_servers(account_token, timeout)
+
         servers = self._get_configured_servers(cfg)
 
         if not servers:
             return {
                 "success": False,
                 "error": "Plex 서버 주소/토큰이 설정되지 않았습니다. "
-                         "환경설정 > 플러그인 설정에서 먼저 입력해주세요.",
+                         "환경설정 > 플러그인 설정에서 먼저 입력해주세요. "
+                         "어떤 주소/토큰을 입력해야 할지 모르겠다면 사이드바의 "
+                         "\"Plex 계정으로 서버 찾기\" 버튼을 써보세요.",
             }
 
         if action == "servers":
@@ -365,6 +385,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
             # 폴백합니다 - 서버가 1개뿐인 기존 배포/구버전 프런트엔드는 이
             # 파라미터를 몰라도 지금까지처럼 동작합니다.
             server_key = (request.args.get("server_key") or "").strip()
+            # plex.tv 계정 토큰(action=discover_servers 전용) - "서버 자동
+            # 조회" 모달에서 그때그때 입력받아 조회에만 쓰고 저장하지 않는
+            # 값입니다. 길이만 방어적으로 제한합니다.
+            account_token = (request.args.get("account_token") or "").strip()[:300]
             # 프런트엔드 검색창(제목 필터). 길이만 방어적으로 제한하고
             # (Plex URL에 그대로 실리는 값이라 과도하게 긴 입력 방지),
             # 그 외 이스케이프는 요청 시 urllib.parse.quote로 처리합니다.
@@ -409,10 +433,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
             return (
                 action, library_key, rating_key, thumb_path, page, thumb_paths,
-                sort_key, search, selected_libraries, server_key,
+                sort_key, search, selected_libraries, server_key, account_token,
             )
         except Exception:
-            return "sections", "", "", "", 1, [], "added_desc", "", None, ""
+            return "sections", "", "", "", 1, [], "added_desc", "", None, "", ""
 
     @staticmethod
     def _safe_int(value, default):
@@ -450,6 +474,86 @@ class PlexPlayerProvider(BaseMetadataProvider):
             if s["key"] == server_key:
                 return s
         return servers[0]
+
+    def _discover_plex_servers(self, account_token, timeout):
+        """plex.tv 계정 토큰으로 그 계정이 접근 가능한(소유 + 공유받은) Plex
+        Media Server 목록을 조회합니다("서버 자동 조회" 모달 전용). 이 코어
+        서버가 plex.tv에만 물어보는 것이고 각 Plex 서버 자체에 직접 접속하는
+        게 아니므로, 이 코어나 사용자 브라우저가 그 서버들에 닿을 수 있는지와
+        무관하게 항상 조회 자체는 가능합니다 - 다만 여기서 나온 주소로 실제
+        재생이 되려면 [설정 > 외부 도메인] 화이트리스트나 브라우저 직접 재생
+        모드 조건(README 참고)은 별도로 충족되어야 합니다. 계정 토큰은
+        이 함수 호출 동안만 쓰이고 어디에도 저장/캐싱하지 않습니다."""
+        account_token = (account_token or "").strip()
+        if not account_token:
+            return {"success": False, "error": "plex.tv 계정 토큰을 입력해주세요."}
+
+        params = {
+            "X-Plex-Token": account_token,
+            "X-Plex-Client-Identifier": "bookoasis-plex-player",
+            "X-Plex-Product": "BookOasis",
+            "X-Plex-Version": "1.0.0",
+            "includeHttps": 1,
+            "includeRelay": 1,
+        }
+        url = f"https://plex.tv/api/v2/resources?{urlencode(params)}"
+
+        try:
+            res = requests.get(url, headers={"Accept": "application/json"}, timeout=timeout)
+        except requests.RequestException as e:
+            return {"success": False, "error": f"plex.tv 요청에 실패했습니다: {e}"}
+
+        if res.status_code == 401:
+            return {"success": False, "error": "plex.tv 토큰이 유효하지 않습니다. 토큰을 다시 확인해주세요."}
+        try:
+            res.raise_for_status()
+            data = res.json()
+        except requests.RequestException as e:
+            return {"success": False, "error": f"plex.tv 요청에 실패했습니다: {e}"}
+        except ValueError as e:
+            return {"success": False, "error": f"plex.tv 응답을 해석하지 못했습니다: {e}"}
+
+        if not isinstance(data, list):
+            return {"success": False, "error": "plex.tv 응답 형식이 예상과 다릅니다."}
+
+        servers = []
+        for resource in data:
+            if not isinstance(resource, dict):
+                continue
+            provides = (resource.get("provides") or "").split(",")
+            if "server" not in provides:
+                continue  # Plex Media Server가 아닌 다른 기기(모바일/TV 앱 등)는 제외
+
+            name = (resource.get("name") or "").strip() or "이름 없는 서버"
+            # 서버별 접속 토큰(accessToken)이 따로 있으면 그것을 쓰고,
+            # 없으면(구조상 거의 없지만 방어적으로) 계정 토큰을 그대로 씁니다 -
+            # 계정 토큰도 그 계정이 접근 가능한 서버에는 보통 그대로 통합니다.
+            server_token = (resource.get("accessToken") or account_token).strip()
+
+            candidates = []
+            for conn in (resource.get("connections") or []):
+                if not isinstance(conn, dict):
+                    continue
+                uri = (conn.get("uri") or "").strip().rstrip("/")
+                if not uri:
+                    continue
+                candidates.append({
+                    "uri": uri,
+                    "local": bool(conn.get("local")),
+                    "relay": bool(conn.get("relay")),
+                })
+            if not candidates:
+                continue
+
+            # 로컬(집/사무실 내부망) 주소를 가장 먼저 추천합니다 - 이 코어
+            # 서버가 그 네트워크 안에 있을 가능성이 가장 높고, 릴레이보다
+            # 속도/안정성이 좋기 때문입니다. 최종 선택은 사용자가 모달에서
+            # 직접 하므로 후보를 지우지 않고 전부 보여줍니다.
+            candidates.sort(key=lambda c: (not c["local"], c["relay"]))
+
+            servers.append({"name": name, "token": server_token, "candidates": candidates})
+
+        return {"success": True, "servers": servers}
 
     def _safe_cache_get(self, key, sub="", ttl=None):
         """플러그인 폴더 안 디스크 캐시에서 읽습니다. ttl(초)이 주어지면
