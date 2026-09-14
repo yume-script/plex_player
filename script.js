@@ -6,6 +6,7 @@
     var HLS_CDN_URL = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js';
 
     var state = {
+        serverKey: '',
         baseUrl: '',
         libraryKey: '',
         libraryTitle: '',
@@ -29,6 +30,7 @@
     }
 
     function cacheEls() {
+        els.serverSelect = $('plexServerSelect');
         els.select = $('plexLibrarySelect');
         els.sortSelect = $('plexSortSelect');
         els.backBtn = $('plexBackBtn');
@@ -92,6 +94,11 @@
             type: DB_TYPE,
             limit: 50,
             action: action,
+            // 서버가 2개 이상 설정된 경우, 현재 사이드바에서 고른 서버의
+            // key를 모든 요청에 실어 보냅니다. 서버가 1개뿐이면 state.serverKey가
+            // 빈 문자열이거나 "0"이고, 백엔드는 비어 있으면 항상 첫 번째
+            // 서버로 폴백하므로 동작에 차이가 없습니다.
+            server_key: state.serverKey || '',
         }, params || {}));
         var res = await fetch('/api/media/dashboard/widgets/' + PLUGIN_ID + '/data?' + qs.toString());
         return res.json();
@@ -188,6 +195,76 @@
             document.head.appendChild(script);
         });
         return hlsLoadPromise;
+    }
+
+    // ------------------------------------------------------------------
+    // 서버(다중 Plex 서버) 선택
+    // ------------------------------------------------------------------
+    // 설정(PLEX_EXTRA_SERVERS)에 Plex 서버가 2개 이상 등록되어 있을 때만
+    // 이 드롭다운을 보여줍니다. 서버가 1개뿐인(기존과 동일한) 배포에서는
+    // 드롭다운이 계속 숨어 있어 화면이 지저분해지지 않습니다. 선택한 서버는
+    // localStorage에 저장해 다음 방문 때도 유지합니다(사이드바 접기/펼치기
+    // 상태를 저장하는 방식과 동일).
+    var SERVER_STORAGE_KEY = 'plexPlayerSelectedServer';
+
+    async function loadServers() {
+        if (!els.serverSelect) return;
+
+        var data = await callPlugin('servers');
+        if (!data || !data.success) {
+            // 서버가 하나도 설정되지 않은 등의 오류 상황 - 드롭다운은 숨긴
+            // 채로 두고, 뒤이어 호출되는 loadSections()가 동일한 에러
+            // 메시지를 화면에 보여주도록 그대로 넘어갑니다.
+            return;
+        }
+
+        var servers = data.servers || [];
+        if (servers.length <= 1) {
+            els.serverSelect.style.display = 'none';
+            state.serverKey = servers.length === 1 ? servers[0].key : '';
+            return;
+        }
+
+        var savedKey = null;
+        try {
+            savedKey = localStorage.getItem(SERVER_STORAGE_KEY);
+        } catch (e) {
+            // 프라이빗 모드 등으로 localStorage를 못 쓰는 환경 - 그냥
+            // 첫 번째 서버를 기본값으로 씁니다.
+        }
+        var matched = servers.some(function (s) { return s.key === savedKey; });
+        state.serverKey = matched ? savedKey : servers[0].key;
+
+        els.serverSelect.innerHTML = servers.map(function (s) {
+            return '<option value="' + escapeHtml(s.key) + '">' + escapeHtml(s.name) + '</option>';
+        }).join('');
+        els.serverSelect.value = state.serverKey;
+        els.serverSelect.style.display = '';
+    }
+
+    async function onServerChange() {
+        state.serverKey = els.serverSelect.value;
+        try {
+            localStorage.setItem(SERVER_STORAGE_KEY, state.serverKey);
+        } catch (e) {
+            // 저장만 못 될 뿐(프라이빗 모드 등) 이번 세션 동작에는 지장 없음
+        }
+
+        // 서버를 바꾸면 지금까지 보고 있던 라이브러리/목록은 더 이상 의미가
+        // 없으므로(다른 서버의 rating_key/library_key와는 호환되지 않음)
+        // 최상위(라이브러리 선택 전 상태)로 되돌립니다.
+        state.view = 'sections';
+        state.libraryKey = '';
+        state.libraryTitle = '';
+        state.libraryType = '';
+        state.search = '';
+        if (els.searchInput) els.searchInput.value = '';
+        els.backBtn.style.display = 'none';
+        els.grid.innerHTML = '<div class="plex-empty">상단에서 Plex 라이브러리를 선택해주세요.</div>';
+        els.pagination.innerHTML = '';
+        renderBreadcrumb();
+
+        await loadSections();
     }
 
     // ------------------------------------------------------------------
@@ -982,6 +1059,9 @@
 
     function init() {
         cacheEls();
+        if (els.serverSelect) {
+            els.serverSelect.addEventListener('change', onServerChange);
+        }
         els.select.addEventListener('change', onLibraryChange);
         els.sortSelect.addEventListener('change', function () {
             state.sort = els.sortSelect.value;
@@ -1073,7 +1153,9 @@
         ensureHlsLoaded().catch(function (e) {
             console.warn('[PlexPlugin] hls.js 사전 로드 실패(재생 시점에 재시도됨):', e);
         });
-        loadSections();
+        // 서버 목록부터 확인한 뒤(2개 이상이면 드롭다운 표시 + 선택된
+        // 서버로 state.serverKey 설정) 그 서버의 라이브러리 목록을 불러옵니다.
+        loadServers().then(loadSections);
     }
 
     init();

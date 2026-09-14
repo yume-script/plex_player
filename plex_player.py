@@ -86,6 +86,17 @@ Plex Media Server의 특정 라이브러리(섹션)를 선택해 영상 목록�
   쓰면서 외부에서도 접속하는 환경이라면 기본값(사용 안 함, 프록시 경유)을
   유지하는 편이 안전합니다. 기본값은 항상 "0"(사용 안 함)이라 기존
   배포는 이 옵션을 몰라도 지금까지와 동일하게 동작합니다.
+- 서버가 여러 대인 경우 _get_configured_servers()가 PLEX_URL/PLEX_TOKEN
+  (서버 "0", 하위 호환)과 PLEX_EXTRA_SERVERS(세미콜론으로 구분한
+  "이름|주소|토큰" 목록)를 합쳐 서버 목록을 만듭니다. 프런트엔드는 먼저
+  action=servers로 이 목록을 받아 사이드바에 서버 선택 드롭다운을 그리고
+  (서버가 1개뿐이면 드롭다운을 숨김), 이후 모든 요청에 그때 고른 서버의
+  key를 server_key 파라미터로 실어 보냅니다. sections/videos/episodes/play/
+  thumb(s)/library_prefs는 전부 이 server_key로 골라진 base_url/token을
+  사용하도록 통일되어 있고, 라이브러리/썸네일 디스크 캐시 키에는 이미
+  base_url이 포함돼 있어 서버별로 자동으로 분리됩니다. server_key가
+  비어있거나 유효하지 않으면 항상 첫 번째 서버로 폴백하므로, 구버전
+  프런트엔드나 서버가 1개뿐인 배포는 이 파라미터 없이도 그대로 동작합니다.
 """
 
 import base64
@@ -150,16 +161,34 @@ class PlexPlayerProvider(BaseMetadataProvider):
     config_schema = [
         {
             "key": "PLEX_URL",
-            "label": "Plex 서버 주소",
+            "label": "Plex 서버 주소 (서버 1 / 기본 서버)",
             "type": "text",
             "required": True,
             "default": "",
         },
         {
             "key": "PLEX_TOKEN",
-            "label": "Plex 토큰 (X-Plex-Token)",
+            "label": "Plex 토큰 (X-Plex-Token) (서버 1 / 기본 서버)",
             "type": "password",
             "required": True,
+        },
+        {
+            "key": "PLEX_SERVER_NAME",
+            "label": "서버 1 표시 이름 (선택, 서버가 2개 이상일 때 사이드바 드롭다운에 표시됩니다. "
+                     "비워두면 \"기본 서버\"로 표시)",
+            "type": "text",
+            "default": "",
+        },
+        {
+            "key": "PLEX_EXTRA_SERVERS",
+            "label": "추가 Plex 서버 (2번째 서버부터) - 여러 대의 Plex 서버를 동시에 쓸 때 사용합니다. "
+                     "형식: 이름|주소|토큰 을 한 서버당 한 묶음으로 쓰고, 서버가 여러 개면 세미콜론(;)으로 "
+                     "구분하세요. 예) 사무실|http://192.168.0.20:32400|abc123; 부모님댁|http://plex.example.com:32400|xyz789 "
+                     "- 이름은 비워도 되며(예: |http://...|토큰), 그러면 \"서버 2\"처럼 자동으로 번호가 붙습니다. "
+                     "형식이 잘못된 항목(구분자 누락 등)은 조용히 무시됩니다. 비워두면(기본값) 서버 1만 사용하는 "
+                     "지금까지와 동일하게 동작합니다.",
+            "type": "text",
+            "default": "",
         },
         {
             "key": "DIRECT_BROWSER_PLAYBACK",
@@ -167,7 +196,8 @@ class PlexPlayerProvider(BaseMetadataProvider):
                      "않고 Plex 서버 주소로 곧바로 접속해 재생합니다. [설정 > 외부 도메인] 화이트리스트 "
                      "등록이 필요 없어지지만, 그 대신 사용자의 브라우저(기기)가 Plex 서버 주소로 직접 "
                      "접속 가능해야 합니다(사설 IP라면 같은 네트워크 안에 있거나 포트포워딩/VPN 등이 "
-                     "되어 있어야 함). 외부에서도 접속하는 서재라면 기본값(사용 안 함)을 권장합니다.",
+                     "되어 있어야 함). 외부에서도 접속하는 서재라면 기본값(사용 안 함)을 권장합니다. "
+                     "서버가 여러 개인 경우 이 설정은 모든 서버에 동일하게 적용됩니다.",
             "type": "select",
             "default": "0",
             "options": [
@@ -188,7 +218,8 @@ class PlexPlayerProvider(BaseMetadataProvider):
         },
         {
             "key": "ALLOWED_LIBRARIES",
-            "label": "표시할 라이브러리 (쉼표로 구분된 이름, 비워두면 전체 표시)",
+            "label": "표시할 라이브러리 (쉼표로 구분된 이름, 비워두면 전체 표시) - 서버가 여러 개면 "
+                     "서버 구분 없이 이름이 일치하는 라이브러리에 전부 적용됩니다.",
             "type": "text",
             "default": "",
         },
@@ -253,19 +284,30 @@ class PlexPlayerProvider(BaseMetadataProvider):
     def get_dashboard_data(self, db_type, limit=10):
         (
             action, library_key, rating_key, thumb_path, page, thumb_paths,
-            sort_key, search, selected_libraries,
+            sort_key, search, selected_libraries, server_key,
         ) = self._read_request_params()
 
         cfg = self.get_plugin_config(db_type, default={})
-        base_url = (cfg.get("PLEX_URL") or "").strip().rstrip("/")
-        token = (cfg.get("PLEX_TOKEN") or "").strip()
+        servers = self._get_configured_servers(cfg)
 
-        if not base_url or not token:
+        if not servers:
             return {
                 "success": False,
                 "error": "Plex 서버 주소/토큰이 설정되지 않았습니다. "
                          "환경설정 > 플러그인 설정에서 먼저 입력해주세요.",
             }
+
+        if action == "servers":
+            # 사이드바의 서버 선택 드롭다운을 채우기 위한 용도 - 서버가
+            # 1개뿐이면 프런트엔드가 이 값을 보고 드롭다운을 아예 숨깁니다.
+            return {
+                "success": True,
+                "servers": [{"key": s["key"], "name": s["name"]} for s in servers],
+            }
+
+        selected = self._select_server(servers, server_key)
+        base_url = selected["base_url"]
+        token = selected["token"]
 
         timeout = self._safe_int(cfg.get("REQUEST_TIMEOUT_SEC"), 10)
 
@@ -312,6 +354,12 @@ class PlexPlayerProvider(BaseMetadataProvider):
             library_key = (request.args.get("library_key") or "").strip()
             rating_key = (request.args.get("rating_key") or "").strip()
             thumb_path = (request.args.get("thumb_path") or "").strip()
+            # 서버가 2개 이상 설정된 경우 프런트엔드가 어떤 서버를 대상으로
+            # 요청하는지 실어 보내는 값입니다(_get_configured_servers가 만드는
+            # 목록의 "key"). 비어 있으면 get_dashboard_data가 첫 번째 서버로
+            # 폴백합니다 - 서버가 1개뿐인 기존 배포/구버전 프런트엔드는 이
+            # 파라미터를 몰라도 지금까지처럼 동작합니다.
+            server_key = (request.args.get("server_key") or "").strip()
             # 프런트엔드 검색창(제목 필터). 길이만 방어적으로 제한하고
             # (Plex URL에 그대로 실리는 값이라 과도하게 긴 입력 방지),
             # 그 외 이스케이프는 요청 시 urllib.parse.quote로 처리합니다.
@@ -356,10 +404,10 @@ class PlexPlayerProvider(BaseMetadataProvider):
 
             return (
                 action, library_key, rating_key, thumb_path, page, thumb_paths,
-                sort_key, search, selected_libraries,
+                sort_key, search, selected_libraries, server_key,
             )
         except Exception:
-            return "sections", "", "", "", 1, [], "added_desc", "", None
+            return "sections", "", "", "", 1, [], "added_desc", "", None, ""
 
     @staticmethod
     def _safe_int(value, default):
@@ -367,6 +415,54 @@ class PlexPlayerProvider(BaseMetadataProvider):
             return int(value)
         except (TypeError, ValueError):
             return default
+
+    def _get_configured_servers(self, cfg):
+        """설정에 입력된 모든 Plex 서버 목록을 만듭니다. 서버 "0"은 항상 기존
+        필드인 PLEX_URL/PLEX_TOKEN(+선택적 PLEX_SERVER_NAME)이고, 그 뒤로
+        PLEX_EXTRA_SERVERS에 세미콜론(;)으로 구분해 추가한 서버들이
+        이어집니다. 각 추가 서버 항목은 "이름|주소|토큰" 형식이며, 구분자가
+        부족한(즉 형식이 잘못된) 항목은 조용히 건너뜁니다 - 오타 하나 때문에
+        전체 서버 목록이 깨지는 것보다 안전합니다. 서버 1개(PLEX_URL/TOKEN만
+        설정)만 쓰는 기존 배포는 길이 1짜리 목록을 돌려받아 지금까지와
+        동일하게 동작합니다."""
+        servers = []
+
+        base_url = (cfg.get("PLEX_URL") or "").strip().rstrip("/")
+        token = (cfg.get("PLEX_TOKEN") or "").strip()
+        if base_url and token:
+            name = (cfg.get("PLEX_SERVER_NAME") or "").strip() or "기본 서버"
+            servers.append({"key": "0", "name": name, "base_url": base_url, "token": token})
+
+        extra_raw = (cfg.get("PLEX_EXTRA_SERVERS") or "").strip()
+        if extra_raw:
+            for chunk in extra_raw.split(";"):
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                parts = [p.strip() for p in chunk.split("|")]
+                if len(parts) < 3:
+                    continue
+                name, url, tok = parts[0], parts[1].rstrip("/"), parts[2]
+                if not url or not tok:
+                    continue
+                idx = len(servers)
+                servers.append({
+                    "key": str(idx),
+                    "name": name or f"서버 {idx + 1}",
+                    "base_url": url,
+                    "token": tok,
+                })
+
+        return servers
+
+    def _select_server(self, servers, server_key):
+        """server_key와 일치하는 서버를 찾아 돌려주고, 없거나(잘못된 값,
+        서버 목록이 바뀐 뒤 남은 옛 값 등) 비어 있으면 안전하게 첫 번째
+        서버로 폴백합니다."""
+        for s in servers:
+            if s["key"] == server_key:
+                return s
+        return servers[0]
 
     def _safe_cache_get(self, key, sub="", ttl=None):
         """플러그인 폴더 안 디스크 캐시에서 읽습니다. ttl(초)이 주어지면

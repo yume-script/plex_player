@@ -139,6 +139,7 @@
 /* ------------------------------------------------------------------ */
 .plex-sidebar-toolbar {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     padding: 0.75rem;
     border-bottom: 1px solid var(--app-border-light);
@@ -157,6 +158,13 @@
 
 .plex-select-sort {
     flex: 1 1 auto;
+}
+
+/* 서버가 2개 이상 설정된 경우에만 표시되는 드롭다운(기본은 style="display:none").
+   library/sort 셀렉트와 한 줄에 욱여넣지 않고 자기 줄을 통째로 차지하게 해서,
+   서버 이름이 길어도 잘리지 않고 나머지 셀렉트들도 좁아지지 않습니다. */
+.plex-select-server {
+    flex: 1 1 100%;
 }
 
 .plex-sidebar-subheader {
